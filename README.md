@@ -108,8 +108,9 @@ DLL 搜尋優先權最高，因此在任何 shell 直接執行、或把整個 bu
 # eCAL 官方 PPA
 sudo add-apt-repository ppa:ecal/ecal-latest
 sudo apt install ecal
+sudo apt install libprotobuf-dev protobuf-compiler   # eCAL CMake config 隱含相依，PPA 套件僅含執行期 libprotobuf23
 # Qt
-sudo apt install qt6-base-dev qt6-serialport-dev   # 或 Qt5: qtbase5-dev libqt5serialport5-dev
+sudo apt install qt6-base-dev libqt6serialport6-dev   # 或 Qt5: qtbase5-dev libqt5serialport5-dev
 # 串口權限
 sudo usermod -aG dialout $USER   # 重新登入生效
 
