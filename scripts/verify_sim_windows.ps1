@@ -1,4 +1,4 @@
-# Windows E2E 驗證: sim node -> status -> setpoint/output 命令 -> meas
+﻿# Windows E2E 驗證: sim node -> status -> setpoint/output 命令 -> meas
 # 由 repo 根目錄執行: powershell -File scripts\verify_sim_windows.ps1
 #
 # 不需設定 PATH: station_deploy() 已把所有相依 DLL 佈到 exe 旁。

@@ -25,10 +25,13 @@ test-station/
 │   └── Topics.hpp
 ├── tools/                   # [獨立專案] ecal_topic — topic echo/pub 除錯工具 (類 rostopic)
 ├── scripts/                 # 兩平台建置/E2E 驗證腳本
-└── GPP3650/                 # [獨立專案] GPP-3650 電源供應器 (見 GPP3650/README.md)
+├── GPP3650/                 # [獨立專案] GPP-3650 電源供應器 (見 GPP3650/README.md)
+│   ├── CMakeLists.txt
+│   ├── node/  gui/
+│   └── build/               # 各專案自己的 build 目錄 (gitignored)
+└── TERMINAL/                # [獨立專案] 本機 shell (偽終端) 橋接 + 互動終端 (見 TERMINAL/README.md)
     ├── CMakeLists.txt
-    ├── node/  gui/
-    └── build/               # 各專案自己的 build 目錄 (gitignored)
+    └── node/  term/
 ```
 
 新增裝置（eload / chamber / thermocouple / DUT / camera...）：建立
@@ -116,6 +119,8 @@ sudo usermod -aG dialout $USER   # 重新登入生效
 
 cmake -S GPP3650 -B GPP3650/build && cmake --build GPP3650/build -j
 cmake -S tools   -B tools/build   && cmake --build tools/build -j
+
+cmake -S . -B build
 ```
 
 CMake 會先嘗試 `find_package(eCAL)`（target `eCAL::core_c`），

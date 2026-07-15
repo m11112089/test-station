@@ -7,8 +7,10 @@
 //       收滿 N 筆 (預設 3) 或逾時 (預設 10000ms) 即結束。
 //       exit code: 0 = 有收到至少 count 筆, 1 = 逾時。
 //
-//   ecal_topic pub <topic> <payload> [--delay ms]
+//   ecal_topic pub <topic> <payload> [--delay ms] [--newline crlf|lf|cr]
 //       發佈一筆 payload (預設等待 --delay 2000ms 讓 eCAL 完成 pub/sub 配對)。
+//       --newline: 在 payload 尾端附加行尾 —— 對 raw byte 橋接 (uart/terminal
+//       的 tx) 送「一行指令」用; shell 從 argv 傳入內嵌換行常會被弄掉。
 //
 #include "common/EcalWrap.hpp"
 
@@ -37,6 +39,9 @@ int main(int argc, char* argv[])
     parser.addOption({QStringLiteral("delay"),
                       QStringLiteral("pub: wait ms for pub/sub matching before send (default 2000)"),
                       QStringLiteral("ms"), QStringLiteral("2000")});
+    parser.addOption({QStringLiteral("newline"),
+                      QStringLiteral("pub: append line ending to payload: crlf|lf|cr"),
+                      QStringLiteral("mode")});
     parser.process(app);
 
     const QStringList args = parser.positionalArguments();
@@ -81,7 +86,15 @@ int main(int argc, char* argv[])
             QTextStream(stderr) << "error: pub mode requires <payload>\n";
             return 1;
         }
-        const QByteArray payload = args.at(2).toUtf8();
+        QByteArray payload = args.at(2).toUtf8();
+        const QString nl = parser.value(QStringLiteral("newline")).toLower();
+        if (nl == QStringLiteral("crlf")) {
+            payload += "\r\n";
+        } else if (nl == QStringLiteral("lf")) {
+            payload += "\n";
+        } else if (nl == QStringLiteral("cr")) {
+            payload += "\r";
+        }
         const int delayMs = parser.value(QStringLiteral("delay")).toInt();
 
         auto pub = std::make_unique<ecalwrap::Publisher>(topic);

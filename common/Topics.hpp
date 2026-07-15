@@ -53,4 +53,17 @@ inline QString cmdConfig(const QString& dev)   { return dev + QStringLiteral("/c
 inline QString meas(const QString& dev)        { return dev + QStringLiteral("/meas"); }
 inline QString status(const QString& dev)      { return dev + QStringLiteral("/status"); }
 
+// raw byte 橋接類裝置 (UART/RS-422 等): payload 為原始位元組, 非 JSON
+inline QString rawTx(const QString& dev)       { return dev + QStringLiteral("/tx"); } // eCAL -> 串口
+inline QString rawRx(const QString& dev)       { return dev + QStringLiteral("/rx"); } // 串口 -> eCAL
+
+// terminal 橋接 (terminal_node): node 就是「一個掛在 eCAL 上的平台 shell」,
+// 唯一的參數是 topic 後綴 (--id, 預設 "shell", 多實例才需要指定)。
+// topic 佈局與 raw byte 橋接相同: terminal/<id>/tx (打字進去),
+// terminal/<id>/rx (畫面串流), terminal/<id>/status (JSON)。
+inline QString terminalPrefix(const QString& id)
+{
+    return QStringLiteral("terminal/") + (id.isEmpty() ? QStringLiteral("shell") : id);
+}
+
 } // namespace topics
