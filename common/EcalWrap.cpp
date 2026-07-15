@@ -31,8 +31,14 @@ Publisher::Publisher(const QString& topic)
     dti.descriptor        = nullptr;
     dti.descriptor_length = 0;
 
+    // eCAL SHM 預設每個 publisher 只有 1 個 memfile buffer: 極短時間內連續
+    // send 多筆時, 訂閱端只會看到最後一筆 (實測 UART 突發位元組流會掉訊息)。
+    // 提高為 ring buffer 8 筆, 換取 burst 容忍度 (代價: 每個 pub 多幾個 memfile)。
+    eCAL_Publisher_Configuration cfg = *eCAL_GetPublisherConfiguration();
+    cfg.layer.shm.memfile_buffer_count = 8;
+
     const QByteArray topicUtf8 = topic.toUtf8();
-    m_pub = eCAL_Publisher_New(topicUtf8.constData(), &dti, nullptr, nullptr);
+    m_pub = eCAL_Publisher_New(topicUtf8.constData(), &dti, nullptr, &cfg);
 }
 
 Publisher::~Publisher()
