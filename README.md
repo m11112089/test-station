@@ -119,6 +119,8 @@ sudo usermod -aG dialout $USER   # 重新登入生效
 
 cmake -S GPP3650 -B GPP3650/build && cmake --build GPP3650/build -j
 cmake -S tools   -B tools/build   && cmake --build tools/build -j
+
+cmake -S . -B build
 ```
 
 CMake 會先嘗試 `find_package(eCAL)`（target `eCAL::core_c`），
