@@ -216,7 +216,52 @@ def test_log_panel_ignores_an_empty_run_name(station, monkeypatch, tmp_path):
     assert sent == []
 
 
-def test_log_panel_reports_when_there_is_no_report(station, tmp_path):
+def test_log_panel_lists_runs_newest_first(station, tmp_path):
+    for name in ("2026-09-19_100000_a", "2026-09-20_100000_b"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "data.csv").write_text("t,topic,name,value,unit\n",
+                                                  encoding="utf-8")
     panel = LogPanel(station, tmp_path)
-    panel._open_report()
-    assert "report.html" in panel._state.text()
+    assert panel._runs.item(0).text().startswith("2026-09-20_100000_b")
+
+
+def test_log_panel_flags_a_run_without_a_report(station, tmp_path):
+    (tmp_path / "2026-09-20_100000_a").mkdir()
+    panel = LogPanel(station, tmp_path)
+    assert "沒有報告" in panel._runs.item(0).text()
+
+
+def test_log_panel_complains_when_the_report_is_missing(station, tmp_path):
+    (tmp_path / "2026-09-20_100000_a").mkdir()
+    panel = LogPanel(station, tmp_path)
+    panel._runs.setCurrentRow(0)
+    panel._open(panel._runs.currentItem())
+    assert "不存在" in panel._state.text()
+
+
+def test_log_panel_asks_the_window_to_show_the_report(station, tmp_path):
+    run = tmp_path / "2026-09-20_100000_a"
+    run.mkdir()
+    (run / "report.html").write_text("<html></html>", encoding="utf-8")
+    panel = LogPanel(station, tmp_path)
+    asked = []
+    panel.report_requested.connect(asked.append)
+    panel._runs.setCurrentRow(0)
+    panel._open(panel._runs.currentItem())
+    assert asked and asked[0].endswith("report.html")
+
+
+def test_log_panel_follows_the_recording_state(station, tmp_path):
+    """狀態來自 Log node 推的 `Log/state`,所以 st 那邊下的 start 這裡也會亮。"""
+    panel = LogPanel(station, tmp_path)
+    assert panel._start_btn.isEnabled() and not panel._mark_btn.isEnabled()
+
+    station.log_state.emit({"recording": True, "run": "burn_in", "rows": 42,
+                            "marks": 1, "topics": 3, "started": "2026-09-20 10:00:00.000",
+                            "dir": str(tmp_path)})
+    assert "錄製中" in panel._state.text() and "42" in panel._state.text()
+    assert not panel._start_btn.isEnabled() and panel._mark_btn.isEnabled()
+
+    station.log_state.emit({"recording": False})
+    assert "未錄製" in panel._state.text()
+    assert panel._start_btn.isEnabled() and not panel._mark_btn.isEnabled()

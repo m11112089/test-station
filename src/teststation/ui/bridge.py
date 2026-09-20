@@ -24,6 +24,9 @@ from ..cli import common
 DISCOVERY_INTERVAL_MS = 2000
 """多久重新問一次站上有哪些 node 與 topic。"""
 
+LOG_SERVICE = "Log"
+"""Log node 的固定 service 名稱(README 2.1)。"""
+
 NON_DATA_CHANNELS = {"status", "activity", "raw"}
 """這三個是共通 topic,不是量測值,不進即時數值表(README 2.2)。"""
 
@@ -76,12 +79,16 @@ class Station(QObject):
     describe_ready = Signal(str, list)
     """(service, 命令清單):命令面板用來長出按鈕。"""
 
+    log_state = Signal(dict)
+    """Log node 的錄製狀態(`Log/state`)。"""
+
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._pool = QThreadPool.globalInstance()
         self._status_subs: dict[str, ecal.Subscriber] = {}
         self._data_subs: dict[str, ecal.Subscriber] = {}
         self._console_subs: dict[str, ecal.Subscriber] = {}
+        self._log_sub: ecal.Subscriber | None = None
         self._nodes: list[str] = []
         self._topics: list[str] = []
 
@@ -92,11 +99,15 @@ class Station(QObject):
     # ------------------------------------------------------------- 生命週期
 
     def start(self) -> None:
+        self.watch_log()
         self._discover()
         self._timer.start()
 
     def stop(self) -> None:
         self._timer.stop()
+        if self._log_sub is not None:
+            self._log_sub.remove_receive_callback()
+            self._log_sub = None
         for subs in (self._status_subs, self._data_subs, self._console_subs):
             for sub in subs.values():
                 sub.remove_receive_callback()
@@ -137,13 +148,29 @@ class Station(QObject):
         for topic in set(topics) - set(self._data_subs):
             self._data_subs[topic] = self._subscribe(
                 topic,
-                lambda raw, t=topic: self._emit_json(self.measurement, t, raw),
+                lambda raw, t=topic: self._emit_measurement(t, raw),
             )
 
     def _subscribe(self, topic: str, handler) -> ecal.Subscriber:
         sub = ecal.Subscriber(topic)
         sub.set_receive_callback(lambda _t, _dt, data, *_: handler(data.buffer))
         return sub
+
+    def watch_log(self) -> None:
+        """訂閱 Log node 的狀態。它沒有 `v`,所以不會混進即時數值表。"""
+        if self._log_sub is not None:
+            return
+        self._log_sub = self._subscribe(
+            f"{LOG_SERVICE}/state", lambda raw: self._emit_log_state(raw)
+        )
+
+    def _emit_log_state(self, raw: bytes) -> None:
+        try:
+            payload = json.loads(raw.decode("utf-8", "replace"))
+        except (json.JSONDecodeError, ValueError):
+            return
+        if isinstance(payload, dict):
+            self.log_state.emit(payload)
 
     def _emit_json(self, signal: Signal, key: str, raw: bytes) -> None:
         try:
@@ -152,6 +179,19 @@ class Station(QObject):
             return
         if isinstance(payload, dict):
             signal.emit(key, payload)
+
+    def _emit_measurement(self, topic: str, raw: bytes) -> None:
+        """只有帶 `v` 的 payload 才是量測值(README 2.2)。
+
+        這條規則讓 `Log/state` 之類的 node 自有狀態 topic 自然被擋在數值表外面,
+        不必維護一份「哪些 topic 要排除」的名單。
+        """
+        try:
+            payload = json.loads(raw.decode("utf-8", "replace"))
+        except (json.JSONDecodeError, ValueError):
+            return
+        if isinstance(payload, dict) and "v" in payload:
+            self.measurement.emit(topic, payload)
 
     # ------------------------------------------------- DUT console 的訂閱
 

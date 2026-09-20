@@ -12,7 +12,7 @@ eCAL service(README 1.2:GUI 沒有特權)。
 程式碼在 [src/teststation/ui/](../src/teststation/ui/)。
 
 > **第一部分:怎麼用**(到「已知限制」為止)
-> **[第二部分:程式碼規劃](#第二部分程式碼規劃-1)**
+> **[第二部分:程式碼規劃](#第二部分程式碼規劃)**
 
 ---
 
@@ -28,7 +28,7 @@ UI 自己開 eCAL session,不需要先啟動別的東西。站台還沒起來時
 
 ```
 ┌─────────────┬──────────────────────────────────────────────────┐
-│ Node        │ 命令 │ DUT console │ 測試計畫 │ Log │ 啟動整站     │
+│ Node        │ 命令 │ DUT console │ 測試計畫 │ Log │ 報告 │ 啟動整站 │
 │             ├──────────────────────────────────────────────────┤
 │ BTM-4208SD  │  [命令清單] [命名 channel ch_ name_] [重新連線]    │
 │  /COM11  ●  │  自由輸入 ______________________________________  │
@@ -45,7 +45,7 @@ UI 自己開 eCAL session,不需要先啟動別的東西。站台還沒起來時
 
 左右、上下都是可拖的分隔線。
 
-## 六塊各自做什麼
+## 各塊各自做什麼
 
 **Node 清單(左)** —— 從 eCAL 註冊資訊自動列出。字的顏色就是燈號,滑鼠移上去看完整狀態:
 
@@ -75,7 +75,16 @@ UI 自己開 eCAL session,不需要先啟動別的東西。站台還沒起來時
 
 **測試計畫** —— 列出 `plans/*.py`,Run / Abort 送給 `Main-Control`。
 
-**Log** —— Start / Mark / Stop 送給 `Log`,「開啟最近報告」找 `logs/*/report.html` 裡最新的一份用瀏覽器打開。
+**Log** —— Start / Mark / Stop 送給 `Log`,下面列出過去的 run(最新在上,標示筆數與有沒有報告)。
+
+錄製狀態是 **Log node 推過來的**(`Log/state`),不是這裡猜的 —— 所以在 `st` 那邊下
+`start`,這個畫面一樣會亮起來、筆數一樣會跳。錄製中 Start 會變灰、Mark 與 Stop 才能按。
+
+**報告** —— 把 `report.html` 開在 UI 裡(QtWebEngine)。報告是自足的檔案,所以
+這裡看到的跟拿瀏覽器開的是同一份東西,沒有第二套繪圖邏輯。在 Log 分頁選一次 run
+按「看報告」就會跳來這裡;「用瀏覽器開」則是丟給系統瀏覽器。
+
+細節見 [log.md](log.md)。
 
 **啟動整站** —— 選一個 `launch/*.yaml` 一鍵啟動,輸出直接顯示在分頁裡。
 它是去跑 `st launch`,不是另外寫一份啟動邏輯 —— 依序啟動、等 `status` 變 `ok`、
@@ -83,9 +92,10 @@ UI 自己開 eCAL session,不需要先啟動別的東西。站台還沒起來時
 
 ## 已知限制
 
-- **「測試計畫」與「Log」分頁按下去會收到 `ERR`**,因為 `Main-Control` 與 `Log` node
-  還沒實作。面板本身是好的,node 一做好就會通。
+- **「測試計畫」分頁按下去會收到 `ERR`**,因為 `Main-Control` node 還沒實作。
+  面板本身是好的,node 一做好就會通。
 - DUT console 的 `raw` 窗格要等 Serial / SSH DUT node 才有東西。
+- 「報告」分頁需要 QtWebEngine。沒有的話會顯示提示,改用「用瀏覽器開」。
 
 ---
 ---
@@ -97,7 +107,7 @@ UI 自己開 eCAL session,不需要先啟動別的東西。站台還沒起來時
 | 模組 | 負責 | 不該出現在這裡的東西 |
 |---|---|---|
 | `bridge.py` | eCAL ↔ Qt:探索、訂閱、非同步 service 呼叫 | 任何 widget |
-| `panels.py` | 六個面板 | 任何 eCAL 呼叫、任何裝置專屬邏輯 |
+| `panels.py` | 各個面板 | 任何 eCAL 呼叫、任何裝置專屬邏輯 |
 | `app.py` | 主視窗、分頁配置、launch 一鍵啟動 | 面板內部的細節 |
 
 **`panels.py` 完全不 import eCAL。** 面板只跟 `Station` 的 signal 與方法打交道,
@@ -139,6 +149,9 @@ DUT console 的訂閱是**例外**:只訂目前看著的那一個(`watch_console
 1. **按鈕來自 `describe`**,`CommandPanel._row()` 只看 `name` / `label` / `style` / `args`
 2. **數值表來自 topic 名稱**,`is_data_topic()` 靠最後一段是不是共通 topic 來分類
 3. **命令是字串**,UI 不解析語意,只負責把字串送出去、把回覆顯示出來
+
+`Log` 面板是這條規則裡唯一「認得某個 node」的地方 —— 但 `Log` 是 README 2.1 訂死的
+固定名稱,跟裝置不同。它也只用共通的管道:service 呼叫 + 一個 `Log/state` topic。
 
 加一台新裝置要做的事:**零**。node 起來、`describe` 回得出來,UI 就認得它。
 

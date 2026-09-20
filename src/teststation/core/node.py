@@ -23,7 +23,7 @@ from datetime import datetime
 
 import ecal.nanobind_core as ecal
 
-from .describe import Arg, Command, check_args, to_json
+from .describe import Arg, Command, check_args, split_args, to_json
 from .payload import measurement, stamp
 
 CMD_METHOD = "cmd"
@@ -46,11 +46,20 @@ class Node(ABC):
 
     device: str = ""
 
-    def __init__(self, port: str) -> None:
+    components: int = ecal.init.DEFAULT
+    """要初始化哪些 eCAL 元件。
+
+    預設的 ``init.DEFAULT``(55)**不含 ``MONITORING``(8)**,少了它
+    ``ecal.monitoring.get_monitoring()`` 會丟 ``RuntimeError``。
+    需要探索站上有什麼的 node(例如 Log 要訂閱所有資料 topic)必須改成 ``init.ALL``。
+    """
+
+    def __init__(self, port: str | None = None) -> None:
         if not self.device:
             raise ValueError("subclass must set `device`")
         self.port = port
-        self.prefix = f"{self.device}/{port}"
+        # Log 與 Main-Control 是固定名稱、沒有 port 的 node(README 2.1)。
+        self.prefix = f"{self.device}/{port}" if port else self.device
 
         self._lock = threading.Lock()
         self._names: dict[str, str] = {}
@@ -167,6 +176,7 @@ class Node(ABC):
         if command is None:
             known = " ".join(sorted(self._commands))
             return f"ERR unknown method '{method}'; known: {known}"
+        args = split_args(command, args)
         problem = check_args(command, args)
         if problem:
             return f"ERR {problem}"
@@ -195,7 +205,7 @@ class Node(ABC):
 
     def run(self) -> None:
         """啟動 node,阻塞到 Ctrl+C 或 stop()。"""
-        ecal.initialize(f"{self.device}_{self.port}".replace("/", "_"))
+        ecal.initialize(self.prefix.replace("/", "_"), self.components)
         self._status_pub = ecal.Publisher(f"{self.prefix}/status", _TEXT)
         self._activity_pub = ecal.Publisher(f"{self.prefix}/activity", _JSON)
         self._server = ecal.ServiceServer(self.prefix)

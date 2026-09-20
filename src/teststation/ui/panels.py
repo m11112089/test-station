@@ -354,40 +354,105 @@ class PlanPanel(QGroupBox):
 # -------------------------------------------------------------- 6. Log 控制
 
 class LogPanel(QGroupBox):
-    """Start / Mark / Stop、開啟最近一份報告。命令送給 `Log`。"""
+    """Start / Mark / Stop、看目前錄到哪、開啟過去的報告。命令送給 `Log`。
+
+    狀態是 Log node 推過來的(`Log/state`),不是這裡猜的 —— 所以 `st` 那邊
+    下的 `start`,這個畫面一樣會亮起來。
+    """
 
     SERVICE = "Log"
+
+    report_requested = Signal(str)
+    """使用者想看某份報告(帶 report.html 的路徑)。由主視窗決定在哪顯示。"""
 
     def __init__(self, station: Station, logs_dir: Path) -> None:
         super().__init__("Log")
         self._station = station
         self._logs_dir = logs_dir
+        self._recording = False
+
+        self._state = QLabel("等待 Log node…")
+        self._state.setWordWrap(True)
+        self._state.setTextFormat(Qt.RichText)
 
         self._run_name = QLineEdit()
         self._run_name.setPlaceholderText("run 名稱,例如 burn_in_45C")
+        self._run_name.returnPressed.connect(self._start)
         self._mark_text = QLineEdit()
         self._mark_text.setPlaceholderText("事件標記,例如 DUT power on")
         self._mark_text.returnPressed.connect(self._mark)
 
-        start = QPushButton("Start")
-        start.clicked.connect(self._start)
-        mark = QPushButton("Mark")
-        mark.clicked.connect(self._mark)
-        stop = QPushButton("Stop")
-        stop.clicked.connect(lambda: self._station.call(self.SERVICE, "stop"))
-        report = QPushButton("開啟最近報告")
-        report.clicked.connect(self._open_report)
+        self._start_btn = QPushButton("Start")
+        self._start_btn.clicked.connect(self._start)
+        self._mark_btn = QPushButton("Mark")
+        self._mark_btn.clicked.connect(self._mark)
+        self._stop_btn = QPushButton("Stop")
+        self._stop_btn.setStyleSheet(f"background-color: {ERROR_COLOR}; color: white;")
+        self._stop_btn.clicked.connect(lambda: self._station.call(self.SERVICE, "stop"))
 
-        self._state = QLabel("")
-        self._state.setWordWrap(True)
+        self._runs = QListWidget()
+        self._runs.setFont(MONO)
+        self._runs.itemDoubleClicked.connect(lambda item: self._open(item))
+        open_btn = QPushButton("看報告")
+        open_btn.clicked.connect(lambda: self._open(self._runs.currentItem()))
+        browser_btn = QPushButton("用瀏覽器開")
+        browser_btn.clicked.connect(
+            lambda: self._open(self._runs.currentItem(), external=True))
+        refresh = QPushButton("重新整理")
+        refresh.clicked.connect(self.refresh_runs)
 
-        form = QFormLayout(self)
-        form.addRow(self._run_name, start)
-        form.addRow(self._mark_text, mark)
-        form.addRow(stop, report)
-        form.addRow(self._state)
+        form = QFormLayout()
+        form.addRow(self._run_name, self._start_btn)
+        form.addRow(self._mark_text, self._mark_btn)
+        form.addRow(self._stop_btn, QLabel(""))
 
+        buttons = QHBoxLayout()
+        buttons.addWidget(open_btn)
+        buttons.addWidget(browser_btn)
+        buttons.addWidget(refresh)
+        buttons.addStretch()
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(self._state)
+        layout.addLayout(form)
+        layout.addWidget(QLabel("過去的 run"))
+        layout.addWidget(self._runs, 1)
+        layout.addLayout(buttons)
+
+        station.log_state.connect(self._on_state)
         station.reply.connect(self._on_reply)
+        self._set_recording(False)
+        self.refresh_runs()
+
+    # ------------------------------------------------------------ 狀態顯示
+
+    def _on_state(self, state: dict) -> None:
+        recording = bool(state.get("recording"))
+        if recording:
+            self._state.setText(
+                f'<b style="color:{STATUS_COLORS["ok"]}">● 錄製中</b> '
+                f'{state.get("run", "")}<br>'
+                f'{state.get("rows", 0)} 筆 · {state.get("marks", 0)} 個 mark · '
+                f'{state.get("topics", 0)} 個 topic · 起於 {state.get("started", "")}'
+                f'<br><span style="color:{UNKNOWN_COLOR}">{state.get("dir", "")}</span>'
+            )
+        else:
+            self._state.setText(
+                f'<span style="color:{UNKNOWN_COLOR}">○ 未錄製</span>')
+        if recording != self._recording:
+            self._set_recording(recording)
+            if not recording:
+                self.refresh_runs()   # 剛 stop,報告應該出來了
+
+    def _set_recording(self, recording: bool) -> None:
+        self._recording = recording
+        self._start_btn.setEnabled(not recording)
+        self._run_name.setEnabled(not recording)
+        self._mark_btn.setEnabled(recording)
+        self._mark_text.setEnabled(recording)
+        self._stop_btn.setEnabled(recording)
+
+    # -------------------------------------------------------------- 命令
 
     def _start(self) -> None:
         name = self._run_name.text().strip()
@@ -400,17 +465,109 @@ class LogPanel(QGroupBox):
             self._station.call(self.SERVICE, f"mark {text}")
             self._mark_text.clear()
 
-    def _open_report(self) -> None:
-        reports = sorted(self._logs_dir.glob("*/report.html"),
-                         key=lambda p: p.stat().st_mtime, reverse=True)
-        if not reports:
-            self._state.setText(f"{self._logs_dir} 底下還沒有 report.html")
-            return
-        webbrowser.open(reports[0].resolve().as_uri())
-        self._state.setText(f"開啟 {reports[0]}")
-
     def _on_reply(self, service: str, line: str, reply: str) -> None:
-        if service == self.SERVICE:
-            colour = ERROR_COLOR if reply.startswith("ERR") else STATUS_COLORS["ok"]
-            self._state.setText(f'{line} → <span style="color:{colour}">{reply}</span>')
-            self._state.setTextFormat(Qt.RichText)
+        if service == self.SERVICE and reply.startswith("ERR"):
+            self._state.setText(
+                f'<span style="color:{ERROR_COLOR}">{line} → {reply}</span>')
+
+    # ------------------------------------------------------------ run 清單
+
+    def refresh_runs(self) -> None:
+        """列出 logs/ 底下的 run,最新的在上面。"""
+        self._runs.clear()
+        if not self._logs_dir.is_dir():
+            self._runs.addItem(f"({self._logs_dir} 還不存在)")
+            return
+        folders = sorted((p for p in self._logs_dir.iterdir() if p.is_dir()),
+                         key=lambda p: p.name, reverse=True)
+        if not folders:
+            self._runs.addItem("(還沒有任何 run)")
+            return
+        for folder in folders:
+            report = folder / "report.html"
+            rows = self._count_rows(folder / "data.csv")
+            mark = "報告已產生" if report.is_file() else "沒有報告"
+            item = QListWidgetItem(f"{folder.name}    {rows} 筆 · {mark}")
+            item.setData(Qt.UserRole, str(folder))
+            if not report.is_file():
+                item.setForeground(QColor(UNKNOWN_COLOR))
+            self._runs.addItem(item)
+
+    @staticmethod
+    def _count_rows(csv_path: Path) -> int:
+        if not csv_path.is_file():
+            return 0
+        with csv_path.open(encoding="utf-8", errors="replace") as handle:
+            return max(sum(1 for _ in handle) - 1, 0)   # 扣掉標題列
+
+    def _open(self, item: QListWidgetItem | None, *, external: bool = False) -> None:
+        folder = item.data(Qt.UserRole) if item else None
+        if not folder:
+            return
+        report = Path(folder) / "report.html"
+        if not report.is_file():
+            self._state.setText(
+                f'<span style="color:{ERROR_COLOR}">{report} 不存在 —— '
+                f'那次 run 沒有正常 stop?</span>')
+            return
+        if external:
+            webbrowser.open(report.resolve().as_uri())
+        else:
+            self.report_requested.emit(str(report.resolve()))
+
+
+# ------------------------------------------------------- 7. 報告檢視器
+
+try:
+    from PySide6.QtWebEngineWidgets import QWebEngineView
+    WEBVIEW = True
+except ImportError:                                    # pragma: no cover
+    QWebEngineView = None
+    WEBVIEW = False
+
+
+class ReportPanel(QWidget):
+    """把 report.html 直接開在 UI 裡。
+
+    報告是自足的檔案(plotly 內嵌),所以這裡就是一個 file:// 的網頁檢視器 ——
+    跟使用者拿瀏覽器開看到的是同一份東西,沒有第二套繪圖邏輯。
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._path: Path | None = None
+        self._where = QLabel("還沒選報告 —— 去 Log 分頁挑一份 run")
+        self._where.setWordWrap(True)
+
+        reload_btn = QPushButton("重新載入")
+        reload_btn.clicked.connect(lambda: self.show_report(self._path))
+        browser_btn = QPushButton("用瀏覽器開")
+        browser_btn.clicked.connect(self._external)
+
+        bar = QHBoxLayout()
+        bar.addWidget(reload_btn)
+        bar.addWidget(browser_btn)
+        bar.addWidget(self._where, 1)
+
+        layout = QVBoxLayout(self)
+        layout.addLayout(bar)
+        if WEBVIEW:
+            self._view = QWebEngineView()
+            layout.addWidget(self._view, 1)
+        else:
+            self._view = None
+            layout.addWidget(QLabel(
+                "這台機器沒有 QtWebEngine,只能用瀏覽器開。"), 1)
+
+    def show_report(self, path: str | Path | None) -> None:
+        if not path:
+            return
+        self._path = Path(path)
+        self._where.setText(str(self._path))
+        if self._view is not None:
+            from PySide6.QtCore import QUrl
+            self._view.load(QUrl.fromLocalFile(str(self._path)))
+
+    def _external(self) -> None:
+        if self._path:
+            webbrowser.open(self._path.as_uri())

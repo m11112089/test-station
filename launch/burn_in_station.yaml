@@ -1,0 +1,15 @@
+# 完整的 burn-in 站台。Log 放第一個,這樣反向關閉時它最後關,
+# 收得到其他 node 的最後資料(README 3.1)。
+#
+# 目前只有 log 與 btm_4208sd 做好了;其餘幾行等該 node 實作後再打開。
+nodes:
+  - run: log
+  - run: btm_4208sd
+    args: --port COM11
+  # - run: pfr_100l
+  #   args: --port COM20
+  # - run: serial_dut
+  #   args: --dut axelera_board
+  # - run: ssh_dut
+  #   args: --dut axelera_board --host 192.168.1.50
+ready_timeout: 30

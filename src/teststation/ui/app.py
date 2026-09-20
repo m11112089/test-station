@@ -18,7 +18,8 @@ from PySide6.QtWidgets import (
 from ..cli.common import session
 from .bridge import Station
 from .panels import (
-    MONO, CommandPanel, ConsolePanel, LogPanel, NodeList, PlanPanel, ValueTable,
+    MONO, CommandPanel, ConsolePanel, LogPanel, NodeList, PlanPanel, ReportPanel,
+    ValueTable,
 )
 
 WINDOW_TITLE = "test-station"
@@ -126,6 +127,7 @@ class MainWindow(QMainWindow):
         self._console = ConsolePanel(self.station)
         self._plans = PlanPanel(self.station, root / "plans")
         self._log = LogPanel(self.station, root / "logs")
+        self._report = ReportPanel()
         self._values = ValueTable(self.station)
         self._launch = LaunchBar(root)
 
@@ -134,7 +136,11 @@ class MainWindow(QMainWindow):
         tabs.addTab(self._console, "DUT console")
         tabs.addTab(self._plans, "測試計畫")
         tabs.addTab(self._log, "Log")
+        tabs.addTab(self._report, "報告")
         tabs.addTab(self._launch, "啟動整站")
+
+        self._tabs = tabs
+        self._log.report_requested.connect(self._show_report)
 
         upper = QSplitter(Qt.Horizontal)
         upper.addWidget(self._nodes)
@@ -154,6 +160,10 @@ class MainWindow(QMainWindow):
                 f"{len(names)} 個 node" if names else "沒有 node —— 用「啟動整站」分頁")
         )
         self.station.start()
+
+    def _show_report(self, path: str) -> None:
+        self._report.show_report(path)
+        self._tabs.setCurrentWidget(self._report)
 
     def _on_node(self, node: str) -> None:
         self._commands.set_node(node)

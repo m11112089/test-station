@@ -29,9 +29,16 @@
 - [ ] 實際字體與版面只在離屏渲染下看過(offscreen 平台沒有字型,字會變方框),
       要在桌面上跑 `uv run st ui` 確認一次。
 
+## Log — 待補
+
+- [ ] `console.log` 要等 Serial / SSH DUT node 才會有內容。
+- [ ] 報告的 `bands`(區段底色)目前恆空;`mark` 只畫成垂直線。
+      要把成對的 mark 變成區段(例如 power-on 期間)還沒做。
+- [ ] 長時間測試的報告大小沒試過:12 小時 × 12 channel 約 30 萬點。
+      撐不住再談抽稀,別先做。
+
 ## 還沒實作的 node
 
 - [ ] **PFR-100L** — 手冊已在 `docs/devices/PFR-100L/`
 - [ ] **Serial / SSH DUT** + `src/teststation/duts/` 的 DUT profile
-- [ ] **Log** — `src/teststation/nodes/log/` 目前只放了 `chart_template.html`
 - [ ] **Main-Control** — 測試計畫 runner 與 `teststation.control` client API
