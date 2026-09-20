@@ -8,6 +8,9 @@ ROS 風格的命令列,站上所有操作的入口。
 
 程式碼在 [src/teststation/cli/](../src/teststation/cli/)。
 
+> **第一部分:怎麼用**(下面到「已知限制」為止)
+> **[第二部分:程式碼規劃](#第二部分程式碼規劃)** —— 要改 `st` 或加子命令的人看這裡
+
 ---
 
 ## 命令一覽
@@ -196,3 +199,126 @@ st console Serial/COM5
 
 - `st console` 的 `raw` 窗格與送出路徑,要等 Serial / SSH DUT node 做好才能真的用上。
 - `st launch` 被硬砍時會留孤兒 node,見上面的警告。
+
+---
+---
+
+# 第二部分:程式碼規劃
+
+給要改 `st` 的人。**逐行的實作細節寫在各模組的 docstring**,這裡只寫變動慢的那層:
+誰負責什麼、東西怎麼流動、要擴充時動哪裡。
+
+## 模組分工
+
+| 模組 | 負責 | 不該出現在這裡的東西 |
+|---|---|---|
+| `main.py` | argparse 骨架、`dispatch()`、進入點 | 任何 eCAL 呼叫 |
+| `common.py` | eCAL session、探索、service 呼叫、格式化 | 子命令的邏輯 |
+| `commands.py` | 各子命令的實作 | argparse、重複的探索程式碼 |
+| `repl.py` | 互動模式、Tab 補完 | 子命令的實作(一律轉給 `dispatch()`) |
+| `console.py` | DUT 雙窗格 TUI | 任何 BTM / PFR 專屬邏輯 |
+| `launch.py` | 依序啟動、就緒判定、順序關閉 | 對裝置的假設 |
+
+依賴方向是單向的,沒有循環:
+
+```
+main ──> commands ──> common ──> ecal
+ │                        ▲
+ ├────> repl ─────────────┤       repl 反過來 import main.dispatch,
+ ├────> console ──────────┤       所以 main 對 repl 用的是延遲 import
+ └────> launch ───────────┘
+```
+
+## 一次呼叫怎麼跑
+
+以 `st service call BTM-4208SD/COM11 "set_channel ch3 SoC"` 為例:
+
+```
+main.main()                     解析 argv
+ └─ common.session()            ecal.initialize(unit, init.ALL)
+     └─ main.dispatch()         (group, action) -> 對應函式
+         └─ commands.service_call()
+             └─ common.call()   ServiceClient -> 等 instance 出現
+                                -> call_method("cmd", b"set_channel ch3 SoC")
+                          ┌───────────── eCAL service ─────────────┐
+                          ▼                                        │
+              core.Node._on_call()      解碼整行                     │
+                └─ Node.handle_line()   拆 method/args、查 describe  │
+                    └─ handler(*args)   -> "OK ch3 = SoC" ──────────┘
+```
+
+**UI 與測試計畫走的是同一條線**,只是入口不同(README 1.2)。所以 `st` 裡不該有任何
+「只有 CLI 才做得到」的捷徑。
+
+## 五個設計決定
+
+**一、只註冊一個 eCAL method `cmd`。**
+eCAL 6 的 service 是 method-based,本站的契約是「一行純文字」。接法是讓 `cmd` 承載整行,
+命令清單一律由 `describe` 取得,不依賴 eCAL 自己的 method 列表。
+`st` 因此不需要知道任何裝置有哪些命令。
+
+**二、`dispatch()` 是 REPL 與一次性呼叫唯一的交會點。**
+`st topic echo x` 跟 REPL 裡打 `topic echo x` 走的是**同一行程式碼**。
+加子命令只要動一處,不會出現「命令列有、REPL 沒有」。
+
+**三、子命令回傳 exit code,不呼叫 `sys.exit()`。**
+`sys.exit()` 會把 REPL 一起帶走。所有 `commands.py` 的函式都 `return 0/1`,
+由 `main()` 決定要不要變成行程的離開碼。
+
+**四、探索一律走 eCAL 原生的 monitoring API。**
+`ecal.monitoring.get_monitoring()` 與 `ecal.registration`,不自己維護節點表、不自己發心跳。
+station 的資訊只有一個來源,`st`、UI、`launch` 看到的東西一定一致。
+
+**五、格式化不假設 payload 格式。**
+`format_payload()` 先試 JSON,解得出來再看有沒有 `v`(量測值)或 `kind`(activity),
+都不是就原樣印。因為 `status` topic 是純文字,而 `st topic echo` 必須三種都能看。
+
+## 加一個新子命令
+
+以 `st topic bw <topic>`(量頻寬)為例,動五個地方:
+
+1. **`main.build_parser()`** —— 在 `topic_actions` 底下加 parser 與參數
+2. **`main.dispatch()`** —— `if args.action == "bw": return commands.topic_bw(args.topic)`
+3. **`commands.py`** —— 寫實作,**回傳 exit code**,共用的東西放 `common.py`
+4. **`repl.GROUPS["topic"]`** —— 加 `"bw"`,Tab 補完才有;需要補 topic 名稱的話
+   再把 `("topic", "bw")` 加進 `repl.TAKES_TOPIC`
+5. **`tests/test_cli.py`** —— 加一筆解析測試
+
+第 4 步最容易漏。漏了不會壞,只是 REPL 按 Tab 補不出來。
+
+## 加一個新裝置 node
+
+**`st` 一行都不用改。** 新 node 只要:
+
+- service 名稱取 `<device>/<port>`,並註冊 `cmd` method(繼承 `core.Node` 就有)
+- 發 `<prefix>/status` 心跳
+- `describe` 回傳它的命令清單
+
+`node list`、`service describe`、Tab 補完、`launch` 的就緒判定就全部自動支援。
+這是把契約放在 topic 與 service、而不是放在程式碼裡的回報(README 1.1)。
+
+## 踩過的坑
+
+| 坑 | 症狀 | 處理 |
+|---|---|---|
+| `initialize()` 預設的 `DEFAULT`(55)不含 `MONITORING`(8) | `get_monitoring()` 丟 `RuntimeError: Failed to get monitoring struct.` | `st` 用 `init.ALL`;node 不需要 |
+| eCAL service callback 的回傳型別 | 回 `bytes` 或 `str` 會被吞成 `bad cast`,client 端照樣收到 `EXECUTED` 但 response 是空的 | 必須回 `(ret_state, bytes)` |
+| Windows 的 Ctrl+C 打到整個 console process group | 子 node 與 launcher 同時收到,「反向順序、Log 最後關」失效 | 子行程用 `CREATE_NEW_PROCESS_GROUP` |
+| `prompt_toolkit` 需要真的終端機 | 被管線餵輸入時直接拋例外 | 非 TTY 時降級成讀 `sys.stdin` |
+| 新建的 publisher 還沒跟訂閱端配對 | `topic pub` 的第一筆掉光 | 等 `get_subscriber_count() > 0` 再送,而不是等固定秒數 |
+| 新建的 subscriber 配對要約 2 秒 | `node list` 顯示 `no heartbeat` | 收齊就走、最多等 3 秒,不是睡死 |
+
+前兩個坑的細節寫在 `core/node.py` 的 docstring,因為那是 core 的事,不只影響 `st`。
+
+## 測試策略
+
+| 檔案 | 測什麼 | 需要 eCAL? |
+|---|---|---|
+| `tests/test_cli.py` | 參數解析、payload 格式化、Tab 補完候選 | 否 |
+| `tests/test_node_contract.py` | 真的跑一個 node,驗 service 與 topic 契約 | 是(stub 裝置) |
+
+`test_cli.py` 裡有一組參數化測試,逐條檢查 **README 5.1 列出的每個命令都解析得了**。
+改 parser 時它會先叫。
+
+需要實機才驗得到的部分(`st console` 的 `raw` 窗格、`launch` 的孤兒情境)記在
+[TODO.md](../TODO.md),不寫進這份文件。
