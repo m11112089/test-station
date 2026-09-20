@@ -8,7 +8,6 @@ dependencies = [
     "eclipse-ecal>=6.1,<7",
     "pyserial>=3.5",
     "prompt-toolkit>=3.0",
-    "textual>=0.80",
     "pyyaml>=6.0",
     "PySide6>=6.7",
 ]

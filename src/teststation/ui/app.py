@@ -19,7 +19,7 @@ from ..cli.common import session
 from .bridge import Station
 from .panels import (
     MONO, CommandPanel, ConsolePanel, LogPanel, NodeList, PlanPanel, ReportPanel,
-    ValueTable,
+    TopicToolsPanel, ValueTable,
 )
 
 WINDOW_TITLE = "test-station"
@@ -128,6 +128,7 @@ class MainWindow(QMainWindow):
         self._plans = PlanPanel(self.station, root / "plans")
         self._log = LogPanel(self.station, root / "logs")
         self._report = ReportPanel()
+        self._tools = TopicToolsPanel(self.station)
         self._values = ValueTable(self.station)
         self._launch = LaunchBar(root)
 
@@ -137,6 +138,7 @@ class MainWindow(QMainWindow):
         tabs.addTab(self._plans, "測試計畫")
         tabs.addTab(self._log, "Log")
         tabs.addTab(self._report, "報告")
+        tabs.addTab(self._tools, "topic 工具")
         tabs.addTab(self._launch, "啟動整站")
 
         self._tabs = tabs

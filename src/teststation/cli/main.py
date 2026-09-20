@@ -10,7 +10,6 @@ st topic echo BTM-4208SD/COM7/ch3
 st topic pub  test/fake/ch1 '{"v": 1.0}'
 st topic hz   BTM-4208SD/COM7/ch3
 st launch     launch/burn_in_station.yaml
-st console    Serial/COM5
 st ui                                # PySide6 圖形介面
 st                                   # 互動模式(REPL)
 ```
@@ -60,9 +59,6 @@ def build_parser() -> argparse.ArgumentParser:
     hz.add_argument("topic")
     hz.add_argument("-w", "--window", type=float, default=1.0, help="統計窗長(秒)")
 
-    console = groups.add_parser("console", help="DUT 雙窗格 TUI")
-    console.add_argument("target", help="例如 Serial/COM5")
-
     launch = groups.add_parser("launch", help="依序啟動整站")
     launch.add_argument("config", help="例如 launch/burn_in_station.yaml")
 
@@ -92,9 +88,6 @@ def dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
             return commands.topic_pub(args.topic, args.payload, args.rate, args.count)
         if args.action == "hz":
             return commands.topic_hz(args.topic, args.window)
-    elif args.group == "console":
-        from .console import run_console
-        return run_console(args.target)
     elif args.group == "launch":
         from .launch import run_launch
         return run_launch(args.config)

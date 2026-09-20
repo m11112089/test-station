@@ -27,7 +27,6 @@ GROUPS: dict[str, list[str]] = {
     "node": ["list"],
     "service": ["list", "call", "describe"],
     "topic": ["list", "echo", "pub", "hz"],
-    "console": [],
     "launch": [],
     "ui": [],
 }
@@ -77,7 +76,7 @@ class StCompleter(Completer):
             return list(GROUPS) + BUILTINS
         group = words[0]
         if position == 1:
-            return self._services() if group == "console" else GROUPS.get(group, [])
+            return GROUPS.get(group, [])
         action = words[1] if len(words) > 1 else ""
         if position == 2:
             if (group, action) in TAKES_SERVICE:

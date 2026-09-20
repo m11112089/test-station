@@ -147,7 +147,7 @@ class Node(ABC):
         self.activity("PUB", f"{self.prefix}/{channel} {value} {unit}", when)
 
     def activity(self, kind: str, text: str, when: datetime | None = None) -> None:
-        """記一筆事件到 activity topic(供 ``st console`` 下半部顯示)。"""
+        """記一筆事件到 activity topic(供 UI 的 DUT console 下半部顯示)。"""
         if self._activity_pub is None:
             return
         line = json.dumps(

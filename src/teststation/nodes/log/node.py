@@ -30,13 +30,10 @@ import ecal.nanobind_core as ecal
 from ...core.describe import Arg, Command
 from ...core.node import Node
 from ...core.payload import stamp
+from ...core.topics import is_common, is_measurement, is_raw
 from . import report
 from .sync import CSV_HEADER, MARK_TOPIC
 
-COMMON_CHANNELS = {"status", "activity"}
-"""共通 topic,不是量測值,不進 data.csv(README 2.2)。"""
-
-RAW_CHANNEL = "raw"
 DISCOVERY_INTERVAL = 2.0
 """多久重新掃一次有沒有新 topic —— 測試中途插上探棒就會多一個 channel。"""
 
@@ -138,7 +135,8 @@ class LogNode(Node):
         """站上除了 Log 自己以外的資料與 raw topic。"""
         if topic.startswith(f"{self.prefix}/"):
             return False
-        return topic.rsplit("/", 1)[-1] not in COMMON_CHANNELS
+        # raw 也要訂:它進 console.log,不進 data.csv。
+        return not is_common(topic)
 
     def _discover(self) -> None:
         try:
@@ -169,15 +167,15 @@ class LogNode(Node):
     def _on_message(self, topic: str, raw: bytes) -> None:
         if self._run is None:
             return
-        if topic.rsplit("/", 1)[-1] == RAW_CHANNEL:
+        if is_raw(topic):
             self._write_console(topic, raw.decode("utf-8", "replace").rstrip())
             return
         try:
             payload = json.loads(raw.decode("utf-8", "replace"))
         except (json.JSONDecodeError, ValueError):
             return
-        if not isinstance(payload, dict) or "v" not in payload:
-            return  # 不是量測值(例如某個 node 自己的狀態 topic)
+        if not is_measurement(payload):
+            return  # 例如某個 node 自己的狀態 topic
         self._write_row(payload.get("t", stamp()), topic,
                         payload.get("name", ""), payload["v"], payload.get("unit", ""))
 

@@ -16,11 +16,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ...core.payload import TIME_FORMAT
+
 CSV_HEADER = ["t", "topic", "name", "value", "unit"]
 MARK_TOPIC = "Log/mark"
 """mark 也寫進同一個 data.csv,省得再開一個檔(README 4 只列了三個檔案)。"""
-
-TIME_FORMAT = "%Y-%m-%d %H:%M:%S.%f"
 
 
 def to_ms(text: str) -> int:

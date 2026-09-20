@@ -15,25 +15,21 @@ UI 不直接碰 eCAL,一律透過這裡,理由有兩個:
 from __future__ import annotations
 
 import json
+import time
 
 import ecal.nanobind_core as ecal
+from collections import deque
+
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, Signal
 
 from ..cli import common
+from ..core.topics import is_measurement, is_measurement_topic
 
 DISCOVERY_INTERVAL_MS = 2000
 """多久重新問一次站上有哪些 node 與 topic。"""
 
 LOG_SERVICE = "Log"
 """Log node 的固定 service 名稱(README 2.1)。"""
-
-NON_DATA_CHANNELS = {"status", "activity", "raw"}
-"""這三個是共通 topic,不是量測值,不進即時數值表(README 2.2)。"""
-
-
-def is_data_topic(topic: str) -> bool:
-    return topic.rsplit("/", 1)[-1] not in NON_DATA_CHANNELS
-
 
 class _Call(QRunnable):
     """service 呼叫會阻塞,丟到執行緒池,不要卡住畫面。"""
@@ -50,6 +46,39 @@ class _Call(QRunnable):
         except Exception as exc:
             reply = f"ERR {exc}"
         self._station.reply.emit(self._service, self._line, reply)
+
+
+class _Publish(QRunnable):
+    """發佈會等訂閱者配對、可能重複送,丟到執行緒池,不要卡住畫面。"""
+
+    def __init__(self, station: "Station", topic: str, payload: str,
+                 rate: float | None, count: int | None) -> None:
+        super().__init__()
+        self._station = station
+        self._topic = topic
+        self._payload = payload
+        self._rate = rate
+        self._count = count
+
+    def run(self) -> None:
+        try:
+            message = common.prepare_payload(self._payload)
+        except ValueError as exc:
+            self._station.published.emit(self._topic, 0, f"ERR {exc}")
+            return
+        publisher = ecal.Publisher(self._topic, common.JSON)
+        note = "" if common.wait_for_subscriber(publisher) else "(沒有人訂閱)"
+        sent = 0
+        total = self._count or 1
+        interval = 1.0 / self._rate if self._rate else 0.0
+        while sent < total:
+            message["t"] = common.stamp()
+            publisher.send(common.encode(message))
+            sent += 1
+            if interval and sent < total:
+                time.sleep(interval)
+        time.sleep(0.3)   # 讓最後一筆真的出去
+        self._station.published.emit(self._topic, sent, note)
 
 
 class Station(QObject):
@@ -82,6 +111,12 @@ class Station(QObject):
     log_state = Signal(dict)
     """Log node 的錄製狀態(`Log/state`)。"""
 
+    rate = Signal(str, object)
+    """(topic, common.Rate | None):量測中的 topic 頻率,1 Hz 更新。"""
+
+    published = Signal(str, int, str)
+    """(topic, 送出幾筆, 說明)。"""
+
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._pool = QThreadPool.globalInstance()
@@ -89,12 +124,19 @@ class Station(QObject):
         self._data_subs: dict[str, ecal.Subscriber] = {}
         self._console_subs: dict[str, ecal.Subscriber] = {}
         self._log_sub: ecal.Subscriber | None = None
+        self._rate_sub: ecal.Subscriber | None = None
+        self._rate_topic = ""
+        self._rate_times: deque[float] = deque(maxlen=50)
         self._nodes: list[str] = []
         self._topics: list[str] = []
 
         self._timer = QTimer(self)
         self._timer.setInterval(DISCOVERY_INTERVAL_MS)
         self._timer.timeout.connect(self._discover)
+
+        self._rate_timer = QTimer(self)
+        self._rate_timer.setInterval(1000)
+        self._rate_timer.timeout.connect(self._emit_rate)
 
     # ------------------------------------------------------------- 生命週期
 
@@ -105,9 +147,11 @@ class Station(QObject):
 
     def stop(self) -> None:
         self._timer.stop()
-        if self._log_sub is not None:
-            self._log_sub.remove_receive_callback()
-            self._log_sub = None
+        self._rate_timer.stop()
+        for sub in (self._log_sub, self._rate_sub):
+            if sub is not None:
+                sub.remove_receive_callback()
+        self._log_sub = self._rate_sub = None
         for subs in (self._status_subs, self._data_subs, self._console_subs):
             for sub in subs.values():
                 sub.remove_receive_callback()
@@ -129,7 +173,7 @@ class Station(QObject):
             self.nodes_changed.emit(nodes)
         if topics != self._topics:
             self._topics = topics
-            self._sync_data_subs([t for t in topics if is_data_topic(t)])
+            self._sync_data_subs([t for t in topics if is_measurement_topic(t)])
             self.topics_changed.emit(topics)
 
     def _sync_status_subs(self, nodes: list[str]) -> None:
@@ -181,17 +225,39 @@ class Station(QObject):
             signal.emit(key, payload)
 
     def _emit_measurement(self, topic: str, raw: bytes) -> None:
-        """只有帶 `v` 的 payload 才是量測值(README 2.2)。
-
-        這條規則讓 `Log/state` 之類的 node 自有狀態 topic 自然被擋在數值表外面,
-        不必維護一份「哪些 topic 要排除」的名單。
-        """
         try:
             payload = json.loads(raw.decode("utf-8", "replace"))
         except (json.JSONDecodeError, ValueError):
             return
-        if isinstance(payload, dict) and "v" in payload:
+        if is_measurement(payload):      # 判準在 core.topics,跟 Log 用同一個
             self.measurement.emit(topic, payload)
+
+    # --------------------------------------------------------- 頻率量測
+
+    def watch_rate(self, topic: str | None) -> None:
+        """量一個 topic 的發佈頻率。統計本身用 `common.rate_of`,跟 `st topic hz` 同一份。"""
+        if self._rate_sub is not None:
+            self._rate_sub.remove_receive_callback()
+            self._rate_sub = None
+        self._rate_times.clear()
+        self._rate_topic = topic or ""
+        if not topic:
+            self._rate_timer.stop()
+            return
+        self._rate_sub = self._subscribe(
+            topic, lambda _raw: self._rate_times.append(time.monotonic()))
+        self._rate_timer.start()
+
+    def _emit_rate(self) -> None:
+        if self._rate_topic:
+            self.rate.emit(self._rate_topic, common.rate_of(list(self._rate_times)))
+
+    # ------------------------------------------------------------- 發佈
+
+    def publish(self, topic: str, payload: str, rate: float | None = None,
+                count: int | None = None) -> None:
+        """發佈假資料。解析與配對等待用 common 的,跟 `st topic pub` 同一份。"""
+        self._pool.start(_Publish(self, topic, payload, rate, count))
 
     # ------------------------------------------------- DUT console 的訂閱
 

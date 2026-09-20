@@ -8,7 +8,7 @@
 | 語言 / 環境 | Python,以 **uv** 管理 |
 | Middleware | **eCAL 6**(`eclipse-ecal`),跨 PC 時所有機台必須同為 v6 |
 | UI | PySide6 |
-| CLI | `st`(ROS 風格)+ `st console`(textual TUI) |
+| CLI | `st`(ROS 風格) |
 | 報告 | Plotly HTML(僅測試結束後產生,UI 內不畫即時曲線) |
 | 儀器 / DUT I/O | pyserial、paramiko(SSH) |
 
@@ -75,7 +75,7 @@ Payload 為 JSON 字串,時間戳由 node 在量測當下蓋上,格式為人眼�
 | topic | 內容 |
 |---|---|
 | `<device>/<port>/status` | `ok` / `reconnecting` / `error: <msg>`,每秒一次,兼心跳 |
-| `<device>/<port>/activity` | node 收到的 service 呼叫與 publish 的事件,供 `st console` 下半部顯示 |
+| `<device>/<port>/activity` | node 收到的 service 呼叫與 publish 的事件,供 UI 的 DUT console 下半部顯示 |
 | `<device>/<port>/raw` | 僅 DUT node:DUT 原始輸出的每一行 |
 
 ### 2.3 `describe` 格式
@@ -238,21 +238,12 @@ st topic hz   BTM-4208SD/COM7/ch3
 st                                   # 互動模式(REPL),Tab 補完來自 describe
 ```
 
-### 5.2 `st console` — DUT 雙窗格 TUI
+### 5.2 命令來源平權
 
-```
-st console Serial/COM5
-┌─ DUT console ─────────────────────────────────┐
-│ [RX] soc: 71.2C  ddr: 58.0C                    │  raw topic
-│ [TX] > temp                                    │  經 send method
-│ > _                                            │
-├─ node activity ───────────────────────────────┤
-│ 15:30:01.123 PUB Serial/COM5/soc_temp 71.2 °C  │  activity topic
-│ 15:30:02.500 SRV set_channel soc_temp → OK     │
-└────────────────────────────────────────────────┘
-```
+`st`、UI、測試計畫送出的命令字串**完全相同**,走同一個 eCAL service。
+重疊的功能只有一份實作:純邏輯放在 `cli/common.py`,`st` 與 UI 各自包一層薄的殼。
 
-上半是 DUT 原始收發,下半是 node 解析後 publish 的值與收到的命令。調整 profile 的 `parse()` 時用來對照。
+新功能一律**兩邊都做** —— `st` 給腳本與遠端,UI 給現場。
 
 ### 5.3 PySide6 UI
 
@@ -263,7 +254,9 @@ st console Serial/COM5
 3. **即時數值表**:所有資料 topic 的最新值、`name`、單位、更新時間。
 4. **測試計畫**:選擇計畫、Run / Abort、進度與輸出。
 5. **Log 控制**:Start / Mark / Stop、開啟最近一份報告。
-6. **DUT console 分頁**:與 `st console` 相同的雙窗格。
+6. **DUT console 分頁**:上半 `raw` 原始收發、下半 `activity`。
+7. **topic 工具**:量發佈頻率、發佈假資料(與 `st topic hz` / `pub` 同一份實作)。
+8. **報告分頁**:把 `report.html` 開在視窗裡。
 
 ---
 
@@ -287,7 +280,7 @@ test-station/
 ├─ README.md
 ├─ TODO.md
 ├─ src/teststation/
-│  ├─ core/            # node 基底:service、describe、set_channel、status、activity、COM 掃描、payload
+│  ├─ core/            # node 基底與共通契約:service、describe、status、activity、COM 掃描、payload、topic 分類
 │  ├─ nodes/
 │  │  ├─ pfr_100l/     # node.py、scpi.py、INTERFACE.md
 │  │  ├─ btm_4208sd/   # node.py、protocol.py、INTERFACE.md
@@ -296,7 +289,7 @@ test-station/
 │  │  └─ log/          # recorder、sync.py、report.py、chart_template.html
 │  ├─ duts/            # DUT profile
 │  ├─ control/         # Main-Control runner 與計畫用 client API
-│  ├─ cli/             # st、st console
+│  ├─ cli/             # st
 │  └─ ui/              # PySide6
 ├─ launch/             # st launch 站台配置(*.yaml)
 ├─ plans/              # 測試計畫腳本

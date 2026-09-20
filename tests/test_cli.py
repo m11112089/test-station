@@ -34,11 +34,6 @@ def test_launch_takes_a_config():
     assert args.group == "launch" and args.config == "launch/burn_in_station.yaml"
 
 
-def test_console_takes_a_target():
-    args = build_parser().parse_args(["console", "Serial/COM5"])
-    assert args.group == "console" and args.target == "Serial/COM5"
-
-
 def test_service_call_joins_unquoted_words():
     """REPL 裡不加引號直接打 `service call X set_channel ch1 name` 也要能用。"""
     args = build_parser().parse_args(
@@ -102,7 +97,7 @@ def completer(monkeypatch):
 
 def test_completes_top_level_groups(completer):
     assert set(completer._candidates([], 0)) >= {
-        "node", "service", "topic", "console", "launch"}
+        "node", "service", "topic", "launch", "ui"}
 
 
 def test_completes_actions_of_a_group(completer):
@@ -121,10 +116,6 @@ def test_completes_methods_from_describe(completer):
     """README 5.1:Tab 補完來自 describe。"""
     candidates = completer._candidates(["service", "call", "BTM-4208SD/COM11"], 3)
     assert candidates == ["describe", "set_channel", "reconnect"]
-
-
-def test_console_completes_service_names(completer):
-    assert "Log" in completer._candidates(["console"], 1)
 
 
 def test_completion_failure_does_not_raise(monkeypatch):

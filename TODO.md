@@ -14,8 +14,8 @@
 
 ## `st` — 待補
 
-- [ ] `st console` 的 `raw` 窗格與 `send` 送出路徑沒辦法驗:要等 Serial / SSH DUT node。
-      目前只驗過 `activity` 窗格與錯誤顯示(對著 BTM node,它沒有 `send`)。
+- [ ] UI 的 DUT console 分頁:`raw` 窗格與 `send` 送出路徑沒辦法驗,要等 Serial / SSH
+      DUT node。目前只驗過 `activity` 窗格與錯誤顯示(對著 BTM node,它沒有 `send`)。
 - [ ] `st launch` 被 `taskkill /F` 或工作管理員硬砍時會留下孤兒 node 佔住 COM。
       正常 Ctrl+C / SIGTERM / SIGBREAK 都已處理。若要根治,Windows 上得用 Job Object。
 - [ ] `launch/burn_in_station.yaml`(README 3.1 的完整範例)還建不起來 ——

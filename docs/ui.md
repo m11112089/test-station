@@ -28,7 +28,7 @@ UI 自己開 eCAL session,不需要先啟動別的東西。站台還沒起來時
 
 ```
 ┌─────────────┬──────────────────────────────────────────────────┐
-│ Node        │ 命令 │ DUT console │ 測試計畫 │ Log │ 報告 │ 啟動整站 │
+│ Node │ 命令 │ DUT console │ 測試計畫 │ Log │ 報告 │ topic 工具 │ 啟動整站 │
 │             ├──────────────────────────────────────────────────┤
 │ BTM-4208SD  │  [命令清單] [命名 channel ch_ name_] [重新連線]    │
 │  /COM11  ●  │  自由輸入 ______________________________________  │
@@ -71,7 +71,13 @@ UI 自己開 eCAL session,不需要先啟動別的東西。站台還沒起來時
 `status`、`activity`、`raw` 這三個共通 topic 不會進來。
 `NAME` 欄會跟著 `set_channel` 立刻改變。
 
-**DUT console** —— 與 `st console` 相同的雙窗格,上半 `raw`、下半 `activity`。
+**DUT console** —— 雙窗格,上半 DUT 的 `raw` 原始收發、下半 node 的 `activity`。
+調整 DUT profile 的 `parse()` 時用來對照。**這是站上唯一的 DUT console** ——
+原本的 `st console` TUI 已移除,兩份實作只留這一份。
+
+**topic 工具** —— 量某個 topic 的發佈頻率、發佈假資料。跟 `st topic hz` / `pub`
+**是同一份實作**:統計在 `cli.common.rate_of()`、payload 處理在
+`cli.common.prepare_payload()`,這個面板只負責選 topic 與顯示。
 
 **測試計畫** —— 列出 `plans/*.py`,Run / Abort 送給 `Main-Control`。
 
@@ -149,6 +155,10 @@ DUT console 的訂閱是**例外**:只訂目前看著的那一個(`watch_console
 1. **按鈕來自 `describe`**,`CommandPanel._row()` 只看 `name` / `label` / `style` / `args`
 2. **數值表來自 topic 名稱**,`is_data_topic()` 靠最後一段是不是共通 topic 來分類
 3. **命令是字串**,UI 不解析語意,只負責把字串送出去、把回覆顯示出來
+
+跟 `st` 重疊的功能一律**共用 `cli.common` 的純函式**,兩邊各自包一層薄殼:
+頻率統計是 `common.rate_of()`、payload 處理是 `common.prepare_payload()`、
+topic 分類是 `core.topics`。新功能兩邊都做,但實作只有一份。
 
 `Log` 面板是這條規則裡唯一「認得某個 node」的地方 —— 但 `Log` 是 README 2.1 訂死的
 固定名稱,跟裝置不同。它也只用共通的管道:service 呼叫 + 一個 `Log/state` topic。

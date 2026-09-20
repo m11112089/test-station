@@ -12,7 +12,8 @@ from pathlib import Path
 import pytest
 from PySide6.QtWidgets import QApplication, QDoubleSpinBox, QLineEdit, QPushButton
 
-from teststation.ui.bridge import Station, is_data_topic
+from teststation.core.topics import is_measurement_topic
+from teststation.ui.bridge import Station
 from teststation.ui.panels import (
     ERROR_COLOR, CommandPanel, LogPanel, NodeList, PlanPanel, ValueTable,
     status_color,
@@ -41,7 +42,7 @@ def station(qt_app):
     ("Serial/COM5/raw", False),
 ])
 def test_only_measurement_topics_reach_the_value_table(topic, expected):
-    assert is_data_topic(topic) is expected
+    assert is_measurement_topic(topic) is expected
 
 
 # ---------------------------------------------------------------- 燈號

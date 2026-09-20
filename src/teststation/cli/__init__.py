@@ -1,1 +1,1 @@
-"""st —— ROS 風格的站台命令列與 DUT console(README 5.1、5.2)。"""
+"""st —— ROS 風格的站台命令列(README 5.1)。"""

@@ -238,7 +238,11 @@ class ValueTable(QGroupBox):
 # ------------------------------------------------------ 4. DUT console 分頁
 
 class ConsolePanel(QWidget):
-    """與 `st console` 相同的雙窗格:上半 DUT 原始收發,下半 node activity。"""
+    """DUT 雙窗格:上半 DUT 原始收發,下半 node activity。
+
+    調整 DUT profile 的 `parse()` 時用來對照:上面有這行、下面沒有對應的 `PUB`,
+    就是 `parse()` 沒接到。
+    """
 
     def __init__(self, station: Station) -> None:
         super().__init__()
@@ -516,7 +520,113 @@ class LogPanel(QGroupBox):
             self.report_requested.emit(str(report.resolve()))
 
 
-# ------------------------------------------------------- 7. 報告檢視器
+# ---------------------------------------------------- 7. topic 工具(hz / pub)
+
+class TopicToolsPanel(QGroupBox):
+    """量發佈頻率、餵假資料 —— 跟 `st topic hz` / `st topic pub` 同一套。
+
+    統計與 payload 處理都在 `cli.common`,這裡只負責選 topic、顯示、觸發。
+    """
+
+    def __init__(self, station: Station) -> None:
+        super().__init__("topic 工具")
+        self._station = station
+
+        self._topics = QComboBox()
+        self._topics.setEditable(True)
+        self._topics.setFont(MONO)
+        measure = QPushButton("量頻率")
+        measure.clicked.connect(self._measure)
+        stop = QPushButton("停止")
+        stop.clicked.connect(lambda: self._station.watch_rate(None))
+        self._rate = QLabel("選一個 topic 再按「量頻率」")
+        self._rate.setFont(MONO)
+
+        self._pub_topic = QLineEdit()
+        self._pub_topic.setPlaceholderText("test/fake/ch1")
+        self._pub_topic.setFont(MONO)
+        self._pub_body = QLineEdit('{"v": 1.0}')
+        self._pub_body.setFont(MONO)
+        self._pub_rate = QDoubleSpinBox()
+        self._pub_rate.setRange(0.0, 100.0)
+        self._pub_rate.setDecimals(1)
+        self._pub_rate.setSpecialValueText("送一筆")
+        self._pub_count = QDoubleSpinBox()
+        self._pub_count.setRange(1, 10000)
+        self._pub_count.setDecimals(0)
+        self._pub_count.setValue(10)
+        send = QPushButton("發佈")
+        send.clicked.connect(self._publish)
+        self._pub_state = QLabel("")
+
+        top = QHBoxLayout()
+        top.addWidget(self._topics, 1)
+        top.addWidget(measure)
+        top.addWidget(stop)
+
+        pub = QHBoxLayout()
+        pub.addWidget(QLabel("topic"))
+        pub.addWidget(self._pub_topic, 1)
+        pub.addWidget(QLabel("payload"))
+        pub.addWidget(self._pub_body, 1)
+        pub.addWidget(QLabel("Hz"))
+        pub.addWidget(self._pub_rate)
+        pub.addWidget(QLabel("筆數"))
+        pub.addWidget(self._pub_count)
+        pub.addWidget(send)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("量測發佈頻率"))
+        layout.addLayout(top)
+        layout.addWidget(self._rate)
+        layout.addSpacing(12)
+        layout.addWidget(QLabel("發佈假資料"))
+        layout.addLayout(pub)
+        layout.addWidget(self._pub_state)
+        layout.addStretch()
+
+        station.topics_changed.connect(self._set_topics)
+        station.rate.connect(self._show_rate)
+        station.published.connect(self._show_published)
+
+    def _set_topics(self, topics: list[str]) -> None:
+        current = self._topics.currentText()
+        self._topics.clear()
+        self._topics.addItems(topics)
+        if current:
+            self._topics.setCurrentText(current)
+
+    def _measure(self) -> None:
+        topic = self._topics.currentText().strip()
+        if topic:
+            self._rate.setText(f"量測 {topic} …(eCAL 配對約 2 秒)")
+            self._station.watch_rate(topic)
+
+    def _show_rate(self, topic: str, rate) -> None:
+        if rate is None:
+            self._rate.setText(f"{topic}\n還沒收到足夠的樣本")
+            return
+        self._rate.setText(
+            f"{topic}\n{rate.hz:.3f} Hz   min {rate.min_gap:.3f}s   "
+            f"max {rate.max_gap:.3f}s   std {rate.std:.5f}   樣本 {rate.samples}")
+
+    def _publish(self) -> None:
+        topic = self._pub_topic.text().strip()
+        if not topic:
+            return
+        rate = self._pub_rate.value() or None
+        count = int(self._pub_count.value()) if rate else None
+        self._pub_state.setText(f"發佈中 {topic} …")
+        self._station.publish(topic, self._pub_body.text(), rate, count)
+
+    def _show_published(self, topic: str, sent: int, note: str) -> None:
+        colour = ERROR_COLOR if note.startswith("ERR") else UNKNOWN_COLOR
+        self._pub_state.setText(
+            f'{topic} ← {sent} 筆 <span style="color:{colour}">{note}</span>')
+        self._pub_state.setTextFormat(Qt.RichText)
+
+
+# ------------------------------------------------------- 8. 報告檢視器
 
 try:
     from PySide6.QtWebEngineWidgets import QWebEngineView

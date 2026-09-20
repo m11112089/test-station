@@ -8,12 +8,15 @@ from __future__ import annotations
 
 import json
 import time
+import statistics
+from collections.abc import Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 
 import ecal.nanobind_core as ecal
 
 from ..core.node import CMD_METHOD
+from ..core.payload import stamp
 
 SETTLE = 1.0
 """eCAL 註冊資訊要一點時間才會傳開;列表類命令先等這麼久再問。"""
@@ -187,3 +190,63 @@ def columns(rows: list[list[str]], headers: list[str]) -> str:
     for row in rows:
         lines.append("  ".join(cell.ljust(widths[i]) for i, cell in enumerate(row)).rstrip())
     return "\n".join(lines)
+
+
+# ------------------------------------------------------------------ 頻率
+
+@dataclass(frozen=True)
+class Rate:
+    """一串取樣時刻算出來的頻率統計。"""
+
+    samples: int
+    hz: float
+    min_gap: float
+    max_gap: float
+    std: float
+
+
+def rate_of(times: Sequence[float]) -> Rate | None:
+    """純計算,不碰 eCAL。不足兩筆回 None。
+
+    `st topic hz` 與 UI 的頻率面板都用這個 —— 兩邊只差在誰去收時刻、算完怎麼顯示。
+    """
+    if len(times) < 2:
+        return None
+    gaps = [b - a for a, b in zip(times, times[1:])]
+    total = sum(gaps)
+    return Rate(
+        samples=len(times),
+        hz=len(gaps) / total if total else 0.0,
+        min_gap=min(gaps),
+        max_gap=max(gaps),
+        std=statistics.stdev(gaps) if len(gaps) > 1 else 0.0,
+    )
+
+
+# ------------------------------------------------------------------ 發佈
+
+def prepare_payload(text: str) -> dict:
+    """JSON 字串 → payload,少了 `t` 就補上現在時間。
+
+    所以 `{"v": 1.0}` 直接就符合 README 2.2 的 schema。不是合法 JSON 會丟 ValueError。
+    """
+    message = json.loads(text)
+    if not isinstance(message, dict):
+        raise ValueError("payload 必須是 JSON 物件")
+    return message if "t" in message else {"t": stamp(), **message}
+
+
+def wait_for_subscriber(publisher: ecal.Publisher, timeout: float = 3.0) -> bool:
+    """等到真的有人在聽才回 True。
+
+    新建的 publisher 要先跟訂閱端配對才送得到,否則第一筆直接掉進虛空。
+    eCAL 的註冊大約 1 Hz,所以等的是「有沒有訂閱者」而不是固定秒數。
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline and publisher.get_subscriber_count() == 0:
+        time.sleep(0.05)
+    return publisher.get_subscriber_count() > 0
+
+
+def encode(message: dict) -> bytes:
+    return json.dumps(message, ensure_ascii=False).encode("utf-8")

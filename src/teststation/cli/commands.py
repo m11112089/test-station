@@ -5,8 +5,6 @@
 
 from __future__ import annotations
 
-import json
-import statistics
 import sys
 import threading
 import time
@@ -14,7 +12,6 @@ from collections import deque
 
 import ecal.nanobind_core as ecal
 
-from ..core.payload import stamp
 from . import common
 from .common import ServiceUnavailable, columns, describe, format_payload
 
@@ -139,14 +136,13 @@ def topic_hz(topic: str, window: float = 1.0, samples: int = 50) -> int:
             time.sleep(window)
             with lock:
                 collected = list(times)
-            if len(collected) < 2:
+            rate = common.rate_of(collected)
+            if rate is None:
                 print("no new messages", flush=True)
                 continue
-            gaps = [b - a for a, b in zip(collected, collected[1:])]
-            spread = statistics.stdev(gaps) if len(gaps) > 1 else 0.0
-            print(f"average rate: {len(gaps) / sum(gaps):7.3f}  "
-                  f"min: {min(gaps):.3f}s  max: {max(gaps):.3f}s  "
-                  f"std dev: {spread:.5f}  window: {len(collected)}", flush=True)
+            print(f"average rate: {rate.hz:7.3f}  "
+                  f"min: {rate.min_gap:.3f}s  max: {rate.max_gap:.3f}s  "
+                  f"std dev: {rate.std:.5f}  window: {rate.samples}", flush=True)
     except KeyboardInterrupt:
         pass
     finally:
@@ -162,23 +158,16 @@ def topic_pub(topic: str, payload: str, rate: float | None = None,
     就直接符合 README 2.2 的 schema。
     """
     try:
-        message = json.loads(payload)
-    except json.JSONDecodeError as exc:
+        message = common.prepare_payload(payload)
+    except ValueError as exc:
         print(f"ERR payload is not valid JSON: {exc}", file=sys.stderr)
         return 1
-    if isinstance(message, dict) and "t" not in message:
-        message = {"t": stamp(), **message}
 
     pub = ecal.Publisher(topic, common.JSON)
-    # 新建的 publisher 要先跟訂閱端配對才送得到,否則第一筆直接掉進虛空。
-    # eCAL 的註冊大約 1 Hz,所以這裡等的是「真的有人在聽」,不是等固定秒數。
-    deadline = time.monotonic() + 3.0
-    while time.monotonic() < deadline and pub.get_subscriber_count() == 0:
-        time.sleep(0.05)
-    if pub.get_subscriber_count() == 0:
+    if not common.wait_for_subscriber(pub):
         print(f"(沒有人訂閱 {topic},還是送出去了)", file=sys.stderr)
 
-    body = json.dumps(message, ensure_ascii=False).encode("utf-8")
+    body = common.encode(message)
     if rate is None:
         pub.send(body)
         # 送完立刻 finalize 會把還在路上的訊息砍掉,留一點時間讓它出去。
@@ -191,9 +180,8 @@ def topic_pub(topic: str, payload: str, rate: float | None = None,
     print(f"publishing to {topic} at {rate} Hz — Ctrl+C to stop", file=sys.stderr)
     try:
         while ecal.ok() and (count is None or sent < count):
-            if isinstance(message, dict) and "t" in message:
-                message["t"] = stamp()
-                body = json.dumps(message, ensure_ascii=False).encode("utf-8")
+            message["t"] = common.stamp()
+            body = common.encode(message)
             pub.send(body)
             sent += 1
             time.sleep(interval)
