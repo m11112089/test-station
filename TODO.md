@@ -21,10 +21,17 @@
 - [ ] `launch/burn_in_station.yaml`(README 3.1 的完整範例)還建不起來 ——
       缺 `pfr_100l`、`serial_dut`、`ssh_dut`。目前只有 `launch/btm_only.yaml`。
 
+## UI — 待補
+
+- [ ] 「測試計畫」與「Log」分頁按下去只會收到 `ERR`,要等 `Main-Control` 與 `Log` node。
+      面板與命令字串已驗過,缺的是對面。
+- [ ] `Main-Control` 的進度 topic 名稱還沒定案,UI 目前只顯示 service 的回覆。
+- [ ] 實際字體與版面只在離屏渲染下看過(offscreen 平台沒有字型,字會變方框),
+      要在桌面上跑 `uv run st ui` 確認一次。
+
 ## 還沒實作的 node
 
 - [ ] **PFR-100L** — 手冊已在 `docs/devices/PFR-100L/`
 - [ ] **Serial / SSH DUT** + `src/teststation/duts/` 的 DUT profile
 - [ ] **Log** — `src/teststation/nodes/log/` 目前只放了 `chart_template.html`
 - [ ] **Main-Control** — 測試計畫 runner 與 `teststation.control` client API
-- [ ] **PySide6 UI**

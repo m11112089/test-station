@@ -303,6 +303,7 @@ test-station/
 ├─ tests/              # 封包解析與 node 契約測試
 ├─ docs/
 │  ├─ st.md            # st 命令列的操作文件
+│  ├─ ui.md            # PySide6 UI 的操作文件
 │  ├─ devices/         # 各裝置的原廠手冊 + 操作文件 README.md(PFR-100L、BTM-4208SD)
 │  └─ interactive_chart.html   # 報告長相的範例
 └─ logs/               # run 輸出(.gitignore)

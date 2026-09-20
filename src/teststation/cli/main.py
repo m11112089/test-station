@@ -11,6 +11,7 @@ st topic pub  test/fake/ch1 '{"v": 1.0}'
 st topic hz   BTM-4208SD/COM7/ch3
 st launch     launch/burn_in_station.yaml
 st console    Serial/COM5
+st ui                                # PySide6 圖形介面
 st                                   # 互動模式(REPL)
 ```
 """
@@ -65,6 +66,8 @@ def build_parser() -> argparse.ArgumentParser:
     launch = groups.add_parser("launch", help="依序啟動整站")
     launch.add_argument("config", help="例如 launch/burn_in_station.yaml")
 
+    groups.add_parser("ui", help="PySide6 圖形介面")
+
     return parser
 
 
@@ -110,6 +113,11 @@ def main(argv: list[str] | None = None) -> int:
             return run_repl(parser)
 
     args = parser.parse_args(argv)
+    if args.group == "ui":
+        # UI 自己開 eCAL session(它要活到視窗關掉),不要被外面這層包住。
+        from ..ui.app import run_ui
+        return run_ui()
+
     with session("st"):
         return dispatch(args, parser)
 

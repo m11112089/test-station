@@ -29,6 +29,7 @@ GROUPS: dict[str, list[str]] = {
     "topic": ["list", "echo", "pub", "hz"],
     "console": [],
     "launch": [],
+    "ui": [],
 }
 BUILTINS = ["help", "exit", "quit"]
 TAKES_SERVICE = {("service", "call"), ("service", "describe")}
