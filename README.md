@@ -285,6 +285,7 @@ st console Serial/COM5
 test-station/
 ├─ pyproject.toml / uv.lock
 ├─ README.md
+├─ TODO.md
 ├─ src/teststation/
 │  ├─ core/            # node 基底:service、describe、set_channel、status、activity、COM 掃描、payload
 │  ├─ nodes/
@@ -299,7 +300,11 @@ test-station/
 │  └─ ui/              # PySide6
 ├─ launch/             # st launch 站台配置(*.yaml)
 ├─ plans/              # 測試計畫腳本
-├─ docs/devices/       # 原廠手冊(PFR-100L、BTM-4208SD)
+├─ tests/              # 封包解析與 node 契約測試
+├─ docs/
+│  ├─ st.md            # st 命令列的操作文件
+│  ├─ devices/         # 各裝置的原廠手冊 + 操作文件 README.md(PFR-100L、BTM-4208SD)
+│  └─ interactive_chart.html   # 報告長相的範例
 └─ logs/               # run 輸出(.gitignore)
 ```
 
