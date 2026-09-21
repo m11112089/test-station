@@ -18,10 +18,15 @@ LOG_SERVICE = "Log"
 
 STATUS = "status"
 ACTIVITY = "activity"
+STATE = "state"
 RAW = "raw"
 
-COMMON_CHANNELS = frozenset({STATUS, ACTIVITY})
-"""每個 node 都有、且跟量測無關的 topic(README 2.2)。"""
+COMMON_CHANNELS = frozenset({STATUS, ACTIVITY, STATE})
+"""node 自己的狀態,跟量測無關(README 2.2)。
+
+`state` 是給 node 放自己那份比 `status` 更細的狀態用的(例如 Log 的錄製進度)。
+不列進來的話它會被當成可記錄的資料 topic 出現在清單上。
+"""
 
 
 def channel_of(topic: str) -> str:

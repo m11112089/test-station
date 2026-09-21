@@ -13,12 +13,13 @@ from pathlib import Path
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
-    QAbstractItemView, QComboBox, QDoubleSpinBox, QFormLayout, QGroupBox,
+    QAbstractItemView, QApplication, QComboBox, QDoubleSpinBox, QFormLayout, QGroupBox,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QPlainTextEdit, QPushButton, QSplitter, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget,
 )
 
+from ..core.topics import is_common
 from .bridge import Station
 
 STATUS_COLORS = {
@@ -379,6 +380,12 @@ class LogPanel(QGroupBox):
         self._state.setWordWrap(True)
         self._state.setTextFormat(Qt.RichText)
 
+        # 狀態是 1 Hz 推過來的,會不停覆蓋自己 —— 回覆與錯誤得有自己的一行,
+        # 不然按下去看到的訊息一秒後就被蓋掉了。
+        self._notice = QLabel("")
+        self._notice.setWordWrap(True)
+        self._notice.setTextFormat(Qt.RichText)
+
         self._run_name = QLineEdit()
         self._run_name.setPlaceholderText("run 名稱,例如 burn_in_45C")
         self._run_name.returnPressed.connect(self._start)
@@ -393,6 +400,16 @@ class LogPanel(QGroupBox):
         self._stop_btn = QPushButton("Stop")
         self._stop_btn.setStyleSheet(f"background-color: {ERROR_COLOR}; color: white;")
         self._stop_btn.clicked.connect(lambda: self._station.call(self.SERVICE, "stop"))
+
+        self._topics = QListWidget()
+        self._topics.setFont(MONO)
+        self._topics.setMaximumHeight(140)
+        apply_topics = QPushButton("套用選擇")
+        apply_topics.clicked.connect(self._apply_topics)
+        all_topics = QPushButton("全選")
+        all_topics.clicked.connect(lambda: self._check_all(True))
+        no_topics = QPushButton("全不選")
+        no_topics.clicked.connect(lambda: self._check_all(False))
 
         self._runs = QListWidget()
         self._runs.setFont(MONO)
@@ -416,21 +433,72 @@ class LogPanel(QGroupBox):
         buttons.addWidget(refresh)
         buttons.addStretch()
 
+        picker = QHBoxLayout()
+        picker.addWidget(all_topics)
+        picker.addWidget(no_topics)
+        picker.addWidget(apply_topics)
+        picker.addStretch()
+
         layout = QVBoxLayout(self)
         layout.addWidget(self._state)
+        layout.addWidget(self._notice)
+        layout.addWidget(QLabel("要記錄哪些 topic"))
+        layout.addWidget(self._topics)
+        layout.addLayout(picker)
         layout.addLayout(form)
         layout.addWidget(QLabel("過去的 run"))
         layout.addWidget(self._runs, 1)
         layout.addLayout(buttons)
 
+        station.topics_changed.connect(self._set_topics)
         station.log_state.connect(self._on_state)
         station.reply.connect(self._on_reply)
         self._set_recording(False)
         self.refresh_runs()
 
+    # ------------------------------------------------------------ topic 選擇
+
+    def _set_topics(self, topics: list[str]) -> None:
+        """列出可以記錄的 topic。status / activity 不在其中 —— 那是 node 自己的狀態。"""
+        checked = set(self.selected_topics())
+        self._topics.clear()
+        for topic in topics:
+            if is_common(topic):
+                continue
+            item = QListWidgetItem(topic)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Checked if topic in checked else Qt.Unchecked)
+            self._topics.addItem(item)
+
+    def selected_topics(self) -> list[str]:
+        return [self._topics.item(i).text() for i in range(self._topics.count())
+                if self._topics.item(i).checkState() == Qt.Checked]
+
+    def _check_all(self, checked: bool) -> None:
+        state = Qt.Checked if checked else Qt.Unchecked
+        for i in range(self._topics.count()):
+            self._topics.item(i).setCheckState(state)
+
+    def _apply_topics(self) -> None:
+        chosen = self.selected_topics()
+        if not chosen:
+            self._notice.setText(
+                f'<span style="color:{ERROR_COLOR}">至少要選一個 topic</span>')
+            return
+        self._station.call(self.SERVICE, "record " + " ".join(chosen))
+
+    def _show_selection(self, selected: list[str]) -> None:
+        """把 Log 回報的選擇反映到勾選框 —— 設定可能來自 launch 檔,不是這裡按的。"""
+        wanted = set(selected)
+        for i in range(self._topics.count()):
+            item = self._topics.item(i)
+            item.setCheckState(Qt.Checked if item.text() in wanted else Qt.Unchecked)
+
     # ------------------------------------------------------------ 狀態顯示
 
     def _on_state(self, state: dict) -> None:
+        if not self._recording and "selected" in state:
+            self._show_selection(state["selected"])
         recording = bool(state.get("recording"))
         if recording:
             self._state.setText(
@@ -470,9 +538,10 @@ class LogPanel(QGroupBox):
             self._mark_text.clear()
 
     def _on_reply(self, service: str, line: str, reply: str) -> None:
-        if service == self.SERVICE and reply.startswith("ERR"):
-            self._state.setText(
-                f'<span style="color:{ERROR_COLOR}">{line} → {reply}</span>')
+        if service != self.SERVICE:
+            return
+        colour = ERROR_COLOR if reply.startswith("ERR") else UNKNOWN_COLOR
+        self._notice.setText(f'<span style="color:{colour}">{reply}</span>')
 
     # ------------------------------------------------------------ run 清單
 
@@ -488,12 +557,12 @@ class LogPanel(QGroupBox):
             self._runs.addItem("(還沒有任何 run)")
             return
         for folder in folders:
-            report = folder / "report.html"
             rows = self._count_rows(folder / "data.csv")
-            mark = "報告已產生" if report.is_file() else "沒有報告"
-            item = QListWidgetItem(f"{folder.name}    {rows} 筆 · {mark}")
+            built = (folder / "report.html").is_file()
+            note = "報告已產生" if built else "按「看報告」產生"
+            item = QListWidgetItem(f"{folder.name}    {rows} 筆 · {note}")
             item.setData(Qt.UserRole, str(folder))
-            if not report.is_file():
+            if not rows:
                 item.setForeground(QColor(UNKNOWN_COLOR))
             self._runs.addItem(item)
 
@@ -505,19 +574,34 @@ class LogPanel(QGroupBox):
             return max(sum(1 for _ in handle) - 1, 0)   # 扣掉標題列
 
     def _open(self, item: QListWidgetItem | None, *, external: bool = False) -> None:
+        """開報告。不存在就現場產一份 —— Log 只負責記錄,報告是事後的事。"""
         folder = item.data(Qt.UserRole) if item else None
         if not folder:
             return
         report = Path(folder) / "report.html"
         if not report.is_file():
-            self._state.setText(
-                f'<span style="color:{ERROR_COLOR}">{report} 不存在 —— '
-                f'那次 run 沒有正常 stop?</span>')
-            return
+            report = self._build_report(Path(folder))
+            if report is None:
+                return
+            self.refresh_runs()
         if external:
             webbrowser.open(report.resolve().as_uri())
         else:
             self.report_requested.emit(str(report.resolve()))
+
+    def _build_report(self, folder: Path) -> Path | None:
+        """跟 `uv run visualization <data.csv>` 同一份實作。"""
+        from ..visualization import build
+
+        csv_path = folder / "data.csv"
+        self._notice.setText(f"產生報告中…{csv_path}")
+        QApplication.processEvents()      # 讓上面那行先畫出來
+        try:
+            return build(csv_path)
+        except (ValueError, OSError) as exc:
+            self._notice.setText(
+                f'<span style="color:{ERROR_COLOR}">產生報告失敗:{exc}</span>')
+            return None
 
 
 # ---------------------------------------------------- 7. topic 工具(hz / pub)

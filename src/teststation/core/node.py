@@ -102,7 +102,7 @@ class Node(ABC):
             Command("describe", "命令清單", self._cmd_describe),
             Command(
                 "set_channel", "命名 channel", self._cmd_set_channel,
-                args=(Arg("channel"), Arg("name")),
+                args=(Arg("channel"), Arg("name")), setting=True,
             ),
             Command("reconnect", "重新連線", self._cmd_reconnect),
         ]

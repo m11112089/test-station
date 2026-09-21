@@ -1,22 +1,26 @@
 # Log — INTERFACE
 
 全站唯一會寫檔的 node(README 1.3)。service 名稱固定是 `Log`,**沒有 port**。
+**只記錄選定的 topic**,而且**不產報告** —— 報告是事後 `uv run visualization <data.csv>`。
 
 ## 命令
 
 | method | 參數 | 說明 | 回覆範例 |
 |---|---|---|---|
-| `start` | `<run_name>` | 建立 run 資料夾,開始訂閱所有資料 topic | `OK logs/2026-09-20_201653_burn_in_45C` |
+| `record` | `<topic> ...` | 選要記錄哪些 topic。**整份清單一次給完,覆蓋前一次**。是 setting | `OK 3 topic(s)` |
+| `start` | `<run_name>` | 建立 run 資料夾,開始訂閱**選定的** topic | `OK logs/2026-09-20_201653_burn_in_45C` |
 | `mark` | `<text>` | 在時間軸打事件標記。**text 吃掉整行剩下的字**,不用引號 | `OK DUT power on` |
-| `stop` | — | 關檔,並產生 `report.html` | `OK .../report.html (1523 rows)` |
+| `stop` | — | 關檔。**不產報告** | `OK .../data.csv (1523 rows)` |
 | `describe` | — | 命令清單 | |
 | `set_channel` | `<channel> <name>` | (共通 method,Log 用不到) | |
 | `reconnect` | — | (共通 method,Log 沒有裝置可重連) | |
 
-UI 的 **Log 分頁**就是這三個按鈕。測試計畫則用 `teststation.control` 的
-`start()` / `mark()` / `stop()` —— 送出的字串完全一樣。
+`record` 是 **setting**(`describe` 裡標了 `"setting": true`),所以 UI 會把它存進
+launch 檔,下次啟動自動帶回來。UI 的 **Log 分頁**是一組 topic 勾選框加上三個按鈕。
 
-重複 `start`、對著沒在錄的 Log 下 `mark` / `stop` 都會回 `OK` 加一句說明,不會壞掉。
+一次都沒 `record` 就 `start` 會回 `ERR no topics selected` —— 什麼都沒開始,
+所以是錯誤不是成功。重複 `start` 同理。對著沒在錄的 Log 下 `mark` / `stop`
+回 `OK` 加一句說明(那是無害的空操作)。
 
 ## Topic
 
@@ -30,12 +34,17 @@ UI 的 **Log 分頁**就是這三個按鈕。測試計畫則用 `teststation.con
 
 ```json
 {"t": "2026-09-20 20:16:53.272", "recording": true, "run": "burn_in_45C",
- "dir": "C:\\...\\logs\\2026-09-20_201653_burn_in_45C",
- "rows": 1523, "marks": 2, "topics": 14, "started": "2026-09-20 20:16:53.272"}
+ "dir": "C:\...\logs\2026-09-20_201653_burn_in_45C",
+ "rows": 1523, "marks": 2, "topics": 3,
+ "selected": ["BTM-4208SD/COM11/ch1", "BTM-4208SD/COM11/ch3"],
+ "started": "2026-09-20 20:16:53.272"}
 ```
 
+`selected` 讓 UI 的勾選框跟著走 —— 設定可能來自 launch 檔,不是在畫面上按的。
+
 **故意不帶 `v`**,所以不會被當成量測值收進報告或即時數值表 —— 判斷一個 payload
-是不是量測值的通則就是「有沒有 `v`」(README 2.2),不需要另外維護排除名單。
+是不是量測值的通則就是「有沒有 `v`」(README 2.2)。`state` 本身也列在共通 topic 裡,
+所以不會出現在「要記錄哪些 topic」的清單上。
 
 Log **不 publish 任何量測值**。
 
@@ -46,8 +55,9 @@ Log **不 publish 任何量測值**。
 | 檔案 | 內容 |
 |---|---|
 | `data.csv` | long format `t, topic, name, value, unit`,**每筆立即 flush** |
-| `console.log` | 所有 DUT `raw` topic 的原始輸出 |
-| `report.html` | `stop` 時產生,plotly 內嵌,**離線可看** |
+| `console.log` | 選到的 DUT `raw` topic 的原始輸出 |
+
+報告不在這裡:`uv run visualization logs/<run>/data.csv` 會在旁邊產出 `report.html`。
 
 `data.csv` 照收到的順序寫,**不對齊、不重取樣**:
 
@@ -75,4 +85,4 @@ Log 要自己找出站上有哪些資料 topic,所以它是**唯一需要 eCAL `
 只是裡面沒有資料 —— 這種情況 `Log/activity` 會出現 `discovery failed` 的紅字。
 
 launch 檔裡 Log 要放第一個,這樣反向關閉時它最後關,收得到其他 node 的最後資料。
-關站時 launcher 會先送它一個 `stop`,所以錄到一半關站也會有報告。
+關站時 launcher 會先送它一個 `stop`,所以錄到一半關站,檔案一樣會正常關好。

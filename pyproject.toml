@@ -16,6 +16,7 @@ dependencies = [
 ui = "teststation.ui.app:run_ui"
 btm_4208sd = "teststation.nodes.btm_4208sd.node:main"
 log = "teststation.nodes.log.node:main"
+visualization = "teststation.visualization:main"
 
 [dependency-groups]
 dev = ["pytest>=8"]

@@ -23,6 +23,7 @@ from collections import deque
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, Signal
 
 from .. import client as common
+from ..core.describe import setting_key
 from ..core.topics import LOG_SERVICE, is_measurement, is_measurement_topic
 
 DISCOVERY_INTERVAL_MS = 2000
@@ -43,6 +44,8 @@ class _Call(QRunnable):
         except Exception as exc:
             reply = f"ERR {exc}"
         try:
+            if reply.startswith("OK"):
+                self._station.remember_setting(self._service, self._line)
             self._station.reply.emit(self._service, self._line, reply)
         except RuntimeError:
             pass   # 視窗已經關了,沒人要聽了
@@ -123,6 +126,9 @@ class Station(QObject):
     published = Signal(str, int, str)
     """(topic, 送出幾筆, 說明)。"""
 
+    settings_changed = Signal()
+    """有 node 的設定值變了 —— 存 launch 檔的按鈕據此更新。"""
+
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._pool = QThreadPool.globalInstance()
@@ -135,6 +141,8 @@ class Station(QObject):
         self._rate_times: deque[float] = deque(maxlen=50)
         self._nodes: list[str] = []
         self._topics: list[str] = []
+        self._describes: dict[str, list[dict]] = {}
+        self._settings: dict[str, dict[str, str]] = {}
 
         self._timer = QTimer(self)
         self._timer.setInterval(DISCOVERY_INTERVAL_MS)
@@ -143,6 +151,35 @@ class Station(QObject):
         self._rate_timer = QTimer(self)
         self._rate_timer.setInterval(1000)
         self._rate_timer.timeout.connect(self._emit_rate)
+
+    # --------------------------------------------------------------- 設定
+
+    @property
+    def settings(self) -> dict[str, dict[str, str]]:
+        """每個 node 目前的設定值:`{node: {key: 完整命令列}}`。
+
+        只收 node 在 `describe` 裡標成 `setting` 的命令,而且**同一個 key 取最後一次**
+        —— 所以這就是「現在的設定」,不是命令歷史。存 launch 檔用的就是它。
+        """
+        return {node: dict(items) for node, items in self._settings.items() if items}
+
+    def remember_setting(self, node: str, line: str) -> None:
+        """記下一筆成功的設定命令。不是設定的命令會被忽略。"""
+        arity = self._arity_if_setting(node, line)
+        if arity is None:
+            return
+        self._settings.setdefault(node, {})[setting_key(line, arity)] = line
+        self.settings_changed.emit()
+
+    def _arity_if_setting(self, node: str, line: str) -> int | None:
+        """這行是不是設定?是的話回傳它宣告的參數個數。"""
+        method = line.split()[0] if line.split() else ""
+        for command in self._describes.get(node, ()):
+            if command.get("name") == method:
+                if not command.get("setting"):
+                    return None
+                return len(command.get("args") or ())
+        return None
 
     @property
     def nodes(self) -> list[str]:
@@ -181,6 +218,9 @@ class Station(QObject):
         if nodes != self._nodes:
             self._nodes = nodes
             self._sync_status_subs(nodes)
+            for name in nodes:
+                if name not in self._describes:
+                    self.describe(name)    # 先問清楚它有哪些命令是設定
             self.nodes_changed.emit(nodes)
         if topics != self._topics:
             self._topics = topics
@@ -304,6 +344,7 @@ class Station(QObject):
                     commands = common.describe(service)
                 except Exception:
                     commands = []
+                self._describes[service] = commands
                 try:
                     self.describe_ready.emit(service, commands)
                 except RuntimeError:

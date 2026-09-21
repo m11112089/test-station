@@ -9,6 +9,22 @@
 就緒判定**直接用 `Station` 現成的探索與 status 訂閱**,不自己再接一次 eCAL ——
 UI 本來就一直在收這兩樣東西。
 
+每個 node 底下可以帶一份 `setting`,是它 ready 之後要送過去的設定命令:
+
+```yaml
+nodes:
+  - run: log
+    setting:
+      - record BTM-4208SD/COM11/ch1 BTM-4208SD/COM11/ch3
+  - run: btm_4208sd
+    args: --port COM11
+    setting:
+      - set_channel ch3 SoC_heatsink
+```
+
+**只有 node 在 `describe` 裡標成 `"setting": true` 的命令才該寫在這裡。**
+`output_on` 那種動作寫進來,開檔就會送電。UI 存檔時只會存設定,不會存動作。
+
 **node 是 UI 的子行程。** 關掉 UI 就是結束測試:反向順序關閉,Log 最後關,
 確保它收得到其他 node 的最後資料。
 """
@@ -60,6 +76,7 @@ class Launcher(QObject):
         self._processes: list[list] = []   # [label, QProcess],label 會被改寫
 
         self._before: set[str] = set()
+        self._settings: list[str] = []
         self._waiting_for: str | None = None
         self._deadline = QTimer(self)
         self._deadline.setSingleShot(True)
@@ -71,6 +88,29 @@ class Launcher(QObject):
     @property
     def running(self) -> bool:
         return bool(self._processes)
+
+    @property
+    def station(self) -> Station:
+        return self._station
+
+    @property
+    def ready_timeout(self) -> float:
+        return self._ready_timeout
+
+    def service_of(self, run: str) -> str | None:
+        """`run: btm_4208sd` 啟動起來之後註冊成哪個 service(`BTM-4208SD/COM11`)。
+
+        存 launch 檔時要靠它把設定值配回正確的 node。
+        """
+        for index, (label, _process) in enumerate(self._processes):
+            if index < len(self._specs) and self._specs[index]["run"] == run:
+                return label if label != run else None
+        return None
+
+    @property
+    def specs(self) -> list[dict]:
+        """這次啟動用的 node 清單(存 launch 檔時要重建 `run` / `args`)。"""
+        return list(self._specs)
 
     # ------------------------------------------------------------- 啟動
 
@@ -97,6 +137,7 @@ class Launcher(QObject):
         arguments = args.split() if isinstance(args, str) else [str(a) for a in args]
 
         self._before = set(self._station.nodes)
+        self._settings = list(spec.get("setting") or [])
         self.output.emit(f"--- starting {run} {args}".rstrip())
         self.state.emit(f"啟動中:{run}", len(self._processes), self._failed)
 
@@ -138,7 +179,21 @@ class Launcher(QObject):
         if status == "ok":
             self._deadline.stop()
             self.output.emit(f"[{node}] ready")
+            self._apply_settings(node)
             self._advance()
+
+    def _apply_settings(self, node: str) -> None:
+        """把 launch 檔裡這個 node 的設定送過去。失敗只警示,不中止整站。"""
+        for line in self._settings:
+            try:
+                reply = client.call(node, line, connect_timeout=3.0)
+            except Exception as exc:
+                reply = f"ERR {exc}"
+            else:
+                if reply.startswith("OK"):
+                    self._station.remember_setting(node, line)
+            self.output.emit(f"[{node}] {line} -> {reply}")
+        self._settings = []
 
     def _give_up(self) -> None:
         # README 3.1:紅字警示,但**繼續啟動下一個**,不整批中止。

@@ -226,18 +226,74 @@ def test_log_panel_lists_runs_newest_first(station, tmp_path):
     assert panel._runs.item(0).text().startswith("2026-09-20_100000_b")
 
 
-def test_log_panel_flags_a_run_without_a_report(station, tmp_path):
+def test_log_panel_offers_to_build_a_missing_report(station, tmp_path):
+    """Log 不再自動產報告,所以清單要說得出來「按一下就有」。"""
     (tmp_path / "2026-09-20_100000_a").mkdir()
     panel = LogPanel(station, tmp_path)
-    assert "沒有報告" in panel._runs.item(0).text()
+    assert "按「看報告」產生" in panel._runs.item(0).text()
 
 
-def test_log_panel_complains_when_the_report_is_missing(station, tmp_path):
+def test_log_panel_builds_the_report_on_demand(station, tmp_path):
+    run = tmp_path / "2026-09-20_100000_a"
+    run.mkdir()
+    (run / "data.csv").write_text(
+        "t,topic,name,value,unit\n"
+        "2026-09-20 10:00:00.000,X/COM1/ch1,ch1,1.0,V\n"
+        "2026-09-20 10:00:01.000,X/COM1/ch1,ch1,2.0,V\n", encoding="utf-8")
+    panel = LogPanel(station, tmp_path)
+    asked = []
+    panel.report_requested.connect(asked.append)
+    panel._runs.setCurrentRow(0)
+    panel._open(panel._runs.currentItem())
+    assert (run / "report.html").is_file()
+    assert asked and asked[0].endswith("report.html")
+
+
+def test_log_panel_says_so_when_there_is_nothing_to_plot(station, tmp_path):
     (tmp_path / "2026-09-20_100000_a").mkdir()
     panel = LogPanel(station, tmp_path)
     panel._runs.setCurrentRow(0)
     panel._open(panel._runs.currentItem())
-    assert "不存在" in panel._state.text()
+    assert "失敗" in panel._notice.text()
+
+
+# ------------------------------------------------------- 要錄哪些 topic
+
+def test_log_panel_lists_recordable_topics_only(station, tmp_path):
+    """status / activity 是 node 自己的狀態,不該出現在可記錄清單裡。"""
+    panel = LogPanel(station, tmp_path)
+    station.topics_changed.emit([
+        "BTM-4208SD/COM11/ch1", "BTM-4208SD/COM11/status",
+        "BTM-4208SD/COM11/activity", "Serial/COM5/raw"])
+    listed = [panel._topics.item(i).text() for i in range(panel._topics.count())]
+    assert listed == ["BTM-4208SD/COM11/ch1", "Serial/COM5/raw"]
+
+
+def test_applying_a_selection_sends_one_record_command(station, tmp_path, monkeypatch):
+    sent = []
+    monkeypatch.setattr(station, "call", lambda s_, l_: sent.append((s_, l_)))
+    panel = LogPanel(station, tmp_path)
+    station.topics_changed.emit(["X/COM1/ch1", "X/COM1/ch2"])
+    panel._check_all(True)
+    panel._apply_topics()
+    assert sent == [("Log", "record X/COM1/ch1 X/COM1/ch2")]
+
+
+def test_applying_an_empty_selection_is_refused(station, tmp_path, monkeypatch):
+    sent = []
+    monkeypatch.setattr(station, "call", lambda s_, l_: sent.append((s_, l_)))
+    panel = LogPanel(station, tmp_path)
+    station.topics_changed.emit(["X/COM1/ch1"])
+    panel._apply_topics()
+    assert sent == [] and "至少要選一個" in panel._notice.text()
+
+
+def test_selection_from_the_node_is_reflected(station, tmp_path):
+    """設定可能來自 launch 檔,畫面要跟著 Log 回報的走。"""
+    panel = LogPanel(station, tmp_path)
+    station.topics_changed.emit(["X/COM1/ch1", "X/COM1/ch2"])
+    station.log_state.emit({"recording": False, "selected": ["X/COM1/ch2"]})
+    assert panel.selected_topics() == ["X/COM1/ch2"]
 
 
 def test_log_panel_asks_the_window_to_show_the_report(station, tmp_path):

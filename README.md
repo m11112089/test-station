@@ -77,7 +77,11 @@ Payload 為 JSON 字串,時間戳由 node 在量測當下蓋上,格式為人眼�
 |---|---|
 | `<device>/<port>/status` | `ok` / `reconnecting` / `error: <msg>`,每秒一次,兼心跳 |
 | `<device>/<port>/activity` | node 收到的 service 呼叫與 publish 的事件,供 UI 的 DUT console 下半部顯示 |
+| `<device>/<port>/state` | 選用:node 自己那份比 `status` 更細的狀態(例如 Log 的錄製進度) |
 | `<device>/<port>/raw` | 僅 DUT node:DUT 原始輸出的每一行 |
+
+`status` / `activity` / `state` 是 node 自己的狀態,**不是資料**,不會被記錄。
+判斷一個 payload 是不是量測值,看它有沒有 `v`。
 
 ### 2.3 `describe` 格式
 
@@ -85,13 +89,20 @@ Payload 為 JSON 字串,時間戳由 node 在量測當下蓋上,格式為人眼�
 [
   {"name": "output_on",   "label": "開始送電"},
   {"name": "output_off",  "label": "停止送電", "style": "danger"},
-  {"name": "set_voltage", "label": "設定電壓",
+  {"name": "set_voltage", "label": "設定電壓", "setting": true,
    "args": [{"name": "v", "unit": "V", "min": 0, "max": 50}]}
 ]
 ```
 
 無參數 → 按鈕;有參數 → 輸入框 + 按鈕(依 `min`/`max` 限制)。按下後送出 `set_voltage 12`。
 同一份清單也是 `INTERFACE.md` 命令表的來源。
+
+`"setting": true` 表示這個命令設的是**一個會留下來的值**,不是一次性的動作。
+只有設定會被存進 launch 檔並在下次啟動時重放 —— 所以 `set_voltage` 標,
+`output_on` 不標。**標錯了開檔就會送電。**
+
+「同一個設定」以命令加上**最後一個參數以外**的所有詞為準:`set_channel ch3 X` 與
+`set_channel ch1 Y` 是兩個設定,重設 ch3 則覆蓋前一次。
 
 ---
 
@@ -126,15 +137,21 @@ uv run pfr_100l                  # 自動掃描
 # launch/burn_in_station.yaml
 nodes:
   - run: log
+    setting:                          # node ready 之後送過去的設定
+      - record BTM-4208SD/COM7/ch3 PFR-100L/COM20/voltage
   - run: pfr_100l
-    args: --port COM20          # 指定 port,不掃描
-  - run: pfr_100l               # 第二台:自動掃描,跳過 COM20
+    args: --port COM20                # 指定 port,不掃描
+    setting:
+      - set_voltage 12
+  - run: pfr_100l                     # 第二台:自動掃描,跳過 COM20
   - run: btm_4208sd
+    setting:
+      - set_channel ch3 SoC_heatsink
   - run: serial_dut
     args: --dut axelera_board
   - run: ssh_dut
     args: --dut axelera_board --host 192.168.1.50
-ready_timeout: 30               # 每個 node 最多等 30 s 變 ok
+ready_timeout: 30                     # 每個 node 最多等 30 s 變 ok
 ```
 
 在 UI 的「啟動整站」分頁選這個檔案就會跑起來。
@@ -144,6 +161,9 @@ ready_timeout: 30               # 每個 node 最多等 30 s 變 ok
 - 各 node 的輸出加前綴合併顯示,前綴在 node 註冊完成後換成它真正的 service 名稱。
 - **node 是 UI 的子行程:關掉 UI 就是結束測試。** 以反向順序關閉,Log 最後關;
   Log 會先收到一個 `stop`(關檔並產生報告)才被關掉,所以錄到一半關站也有報告。
+- 每個 node 的 `setting` 在它 ready 之後才送。**只能放 `describe` 標成 `setting` 的命令**
+  —— `output_on` 那種動作寫進來,開檔就會送電。
+- UI 的「存成 launch 檔」會把目前的 node 與設定值寫成這種檔案,下次直接開。
 - 不使用 eCAL Sys:它只能「等固定秒數」,不理解 `status` 語意,且需安裝完整版 eCAL。
 
 ---
@@ -184,21 +204,31 @@ uv run ssh_dut    --dut axelera_board --host 192.168.1.50
 
 ### Log
 
+**只記錄選定的 topic。**
+
 | method | 說明 |
 |---|---|
-| `start <run_name>` | 建立 `logs/YYYY-MM-DD_HHMMSS_<run_name>/`,開始訂閱所有資料 topic |
+| `record <topic> ...` | 選要記錄哪些 topic。**整份清單一次給完,覆蓋前一次**;是 setting |
+| `start <run_name>` | 建立 `logs/YYYY-MM-DD_HHMMSS_<run_name>/`,開始訂閱選定的 topic |
 | `mark <text>` | 在時間軸打事件標記(報告上畫成垂直線) |
-| `stop` | 關檔,並自動產生 `report.html` |
+| `stop` | 關檔 |
 
 run 資料夾內容:
 
 | 檔案 | 內容 |
 |---|---|
 | `data.csv` | long format:`t, topic, name, value, unit`;**每筆立即 flush** |
-| `console.log` | 所有 DUT `raw` topic 的原始輸出 |
-| `report.html` | 由 `sync.py`(按 topic 分組,**不對齊、不重取樣**)+ `chart_template.html` 產生 |
+| `console.log` | 選到的 DUT `raw` topic 的原始輸出 |
 
-報告產出後由使用者在 HTML 上自行調整(顯示群組、區間統計等)。
+**Log 不產報告。** 記錄與視覺化是兩件事:
+
+```
+uv run visualization logs/<run>/data.csv
+```
+
+報告由 `sync.py`(按 topic 分組,**不對齊、不重取樣**)+ `chart_template.html` 產生,
+plotly 內嵌所以離線可看。想換畫法、想重畫半年前的 run,都不必重跑測試 ——
+CSV 才是資料,報告只是它的一種樣子。UI 的 Log 分頁按「看報告」也是叫同一份實作。
 
 ### Main-Control — 測試計畫 runner
 
@@ -251,8 +281,8 @@ uv run ui
 3. **即時數值表**:所有資料 topic 的最新值、`name`、單位、更新時間。
 4. **DUT console**:上半 `raw` 原始收發、下半 `activity`。
 5. **測試計畫**:選擇計畫、Run / Abort、進度與輸出。
-6. **Log 控制**:Start / Mark / Stop、run 清單、錄製狀態。
-7. **報告**:把 `report.html` 開在視窗裡。
+6. **Log 控制**:勾選要記錄的 topic、Start / Mark / Stop、run 清單、錄製狀態。
+7. **報告**:把 `report.html` 開在視窗裡(沒有就現場產一份)。
 8. **topic 工具**:量發佈頻率、發佈假資料。
 9. **啟動整站**:選 launch 檔依序啟動(見 3.1)。
 
@@ -279,6 +309,7 @@ test-station/
 ├─ TODO.md
 ├─ src/teststation/
 │  ├─ client.py        # 站台 client:session、探索、service 呼叫、頻率、payload。**不依賴 Qt**
+│  ├─ visualization.py # uv run visualization <data.csv> → report.html
 │  ├─ core/            # node 基底與共通契約:service、describe、status、activity、COM 掃描、payload、topic 分類
 │  ├─ nodes/
 │  │  ├─ pfr_100l/     # node.py、scpi.py、INTERFACE.md

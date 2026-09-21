@@ -11,6 +11,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import yaml
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QPlainTextEdit,
@@ -53,6 +54,9 @@ class LaunchBar(QWidget):
         self._stop = QPushButton("關閉整站")
         self._stop.setEnabled(False)
         self._stop.clicked.connect(self._launcher.shutdown)
+        self._save = QPushButton("存成 launch 檔")
+        self._save.setToolTip("把現在的 node 與設定值存下來,下次直接開")
+        self._save.clicked.connect(self._save_launch)
         self._state = QLabel("尚未啟動")
 
         self._output = QPlainTextEdit(readOnly=True)
@@ -62,6 +66,7 @@ class LaunchBar(QWidget):
         bar = QHBoxLayout()
         bar.addWidget(self._choose)
         bar.addWidget(self._stop)
+        bar.addWidget(self._save)
         bar.addWidget(self._state, 1)
 
         layout = QVBoxLayout(self)
@@ -90,6 +95,45 @@ class LaunchBar(QWidget):
         self._state.setText(f"{text} · {note}" if started or failed else text)
         self._choose.setEnabled(not self._launcher.running)
         self._stop.setEnabled(self._launcher.running)
+
+    # ------------------------------------------------------- 存成 launch 檔
+
+    def _save_launch(self) -> None:
+        """把這次啟動的 node 與**目前的設定值**寫成一份 launch 檔。
+
+        設定值來自 `Station.settings` —— 只有 node 自己標成 `setting` 的命令,
+        而且同一個設定取最後一次。所以 `output_on` 這類動作不會被存進去,
+        下次開檔也不會意外送電。
+        """
+        specs = self._launcher.specs
+        if not specs:
+            self._state.setText("這次不是從 launch 檔啟動的,沒有 node 清單可存")
+            return
+        path, _filter = QFileDialog.getSaveFileName(
+            self, "存成 launch 檔", str(self._root / "launch" / "station.yaml"),
+            "YAML (*.yaml *.yml)")
+        if not path:
+            return
+
+        settings = self._launcher.station.settings
+        nodes = []
+        for spec in specs:
+            entry = {"run": spec["run"]}
+            if spec.get("args"):
+                entry["args"] = spec["args"]
+            service = self._launcher.service_of(spec["run"])
+            lines = sorted(settings.get(service, {}).values()) if service else []
+            if lines:
+                entry["setting"] = lines
+            nodes.append(entry)
+
+        document = {"nodes": nodes, "ready_timeout": self._launcher.ready_timeout}
+        Path(path).write_text(
+            "# 由 UI 產生:node 清單與目前的設定值\n"
+            + yaml.safe_dump(document, allow_unicode=True, sort_keys=False),
+            encoding="utf-8")
+        kept = sum(len(n.get("setting", ())) for n in nodes)
+        self._state.setText(f"已存 {path}({len(nodes)} 個 node、{kept} 筆設定)")
 
     def shutdown(self) -> None:
         """UI 關掉時一併收掉所有 node(README 3.1 的反向順序)。"""

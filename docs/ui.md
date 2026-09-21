@@ -84,19 +84,26 @@ UI 自己開 eCAL session,不需要先啟動別的東西。站台還沒起來時
 
 **測試計畫** —— 列出 `plans/*.py`,Run / Abort 送給 `Main-Control`。
 
-**Log** —— Start / Mark / Stop 送給 `Log`,下面列出過去的 run(最新在上,標示筆數與有沒有報告)。
+**Log** —— 上面是「要記錄哪些 topic」的勾選清單(`status` / `activity` / `state` 不會出現),
+下面是 Start / Mark / Stop 與過去的 run。**Log 只錄勾到的那些**,一個都沒勾就 Start 會被擋。
 
 錄製狀態是 **Log node 推過來的**(`Log/state`),不是這裡猜的 —— 所以測試計畫
 用 `control` 下的 `start()`,這個畫面一樣會亮起來、筆數一樣會跳。錄製中 Start 會變灰、Mark 與 Stop 才能按。
 
-**報告** —— 把 `report.html` 開在 UI 裡(QtWebEngine)。報告是自足的檔案,所以
-這裡看到的跟拿瀏覽器開的是同一份東西,沒有第二套繪圖邏輯。在 Log 分頁選一次 run
-按「看報告」就會跳來這裡;「用瀏覽器開」則是丟給系統瀏覽器。
+**報告** —— 把 `report.html` 開在 UI 裡(QtWebEngine)。**Log 不自動產報告**,
+所以按「看報告」時若還沒有,會當場跑一次 `visualization` 產出來再開。
+跟 `uv run visualization <data.csv>` 是同一份實作。
 
 細節見 [log.md](log.md)。
 
 **啟動整站** —— 選一個 `launch/*.yaml` 依序啟動,輸出直接顯示在分頁裡。
 等的是每個 node 的 `status` 變成 `ok`,**不是等固定秒數**(README 3.1)。
+launch 檔裡每個 node 的 `setting` 會在它 ready 之後送過去。
+
+**「存成 launch 檔」** 把目前的 node 與設定值寫成一份新的 yaml。存的是
+**設定**不是動作 —— node 在 `describe` 裡標了 `"setting": true` 的才算,
+所以 `output_on` 不會被存進去,下次開檔也不會意外送電。
+同一個設定設過很多次的話,存的是最後一次的值。
 
 **node 是 UI 的子行程:關掉 UI 就是結束測試。** 關閉時以反向順序進行,Log 最後關,
 而且會先送 Log 一個 `stop` —— 所以錄到一半關站,檔案一樣會正常關好。
@@ -161,6 +168,7 @@ DUT console 的訂閱是**例外**:只訂目前看著的那一個(`watch_console
 1. **按鈕來自 `describe`**,`CommandPanel._row()` 只看 `name` / `label` / `style` / `args`
 2. **數值表來自 topic 名稱**,`is_data_topic()` 靠最後一段是不是共通 topic 來分類
 3. **命令是字串**,UI 不解析語意,只負責把字串送出去、把回覆顯示出來
+4. **哪些命令是設定由 node 自己說**(`describe` 的 `setting` 旗標),UI 不猜
 
 跟測試計畫重疊的部分一律走 `teststation.client`:service 呼叫是 `client.call()`、
 頻率統計是 `client.rate_of()`、payload 處理是 `client.prepare_payload()`、

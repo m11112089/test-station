@@ -1,15 +1,18 @@
 """Log node —— 全站唯一會寫檔的 node(README 1.3、4)。
 
-service 名稱固定是 `Log`(沒有 port)。`start` 之後訂閱站上所有資料 topic,
-每收到一筆就寫進 `data.csv` 並**立即 flush** —— 所以 Log 被砍掉時最多只損失最後一行。
+service 名稱固定是 `Log`(沒有 port)。它**只錄選定的 topic** —— 用 `record` 指定,
+`start` 之後只訂閱那些,每收到一筆就寫進 `data.csv` 並**立即 flush**,
+所以 Log 被砍掉時最多只損失最後一行。
 
 run 資料夾:
 
 | 檔案 | 內容 |
 |---|---|
 | `data.csv` | long format `t, topic, name, value, unit`,照收到的順序寫 |
-| `console.log` | 所有 DUT `raw` topic 的原始輸出 |
-| `report.html` | `stop` 時由 sync.py + chart_template.html 產生 |
+| `console.log` | 選到的 DUT `raw` topic 的原始輸出 |
+
+**Log 不產報告。** 記錄與視覺化是兩件事:報告事後用 `uv run visualization <data.csv>`
+產生,想換畫法、想重畫舊的 run,都不必重跑測試。
 
 時間戳用的是**各 node 在量測當下蓋的那個**,不是 Log 收到的時間 —— 跨 PC 時
 網路延遲不會污染時間軸(README 2.2)。
@@ -31,7 +34,6 @@ from ...core.describe import Arg, Command
 from ...core.node import Node
 from ...core.payload import stamp
 from ...core.topics import is_common, is_measurement, is_raw
-from . import report
 from .sync import CSV_HEADER, MARK_TOPIC
 
 DISCOVERY_INTERVAL = 2.0
@@ -65,20 +67,37 @@ class LogNode(Node):
         self._last_discovery = 0.0
         self._last_state = 0.0
         self._discovery_failed = False
+        self._selected: list[str] = []
 
     # -------------------------------------------------------------- 命令
 
     def commands(self) -> list[Command]:
         return [
+            Command("record", "選要記錄的 topic", self._cmd_record,
+                    args=(Arg("topics"),), variadic=True, setting=True),
             Command("start", "開始記錄", self._cmd_start, args=(Arg("run_name"),)),
             Command("mark", "打事件標記", self._cmd_mark, args=(Arg("text"),),
                     variadic=True),
             Command("stop", "關檔並產生報告", self._cmd_stop, style="danger"),
         ]
 
-    def _cmd_start(self, run_name: str) -> str:
+    def _cmd_record(self, topics: str) -> str:
+        """設定要記錄哪些 topic。**整份清單一次給完,會覆蓋上一次。**
+
+        是 setting(不是動作),所以 UI 可以把它存進 launch 檔,下次直接帶起來。
+        """
+        self._selected = sorted({t for t in topics.replace(",", " ").split() if t})
         if self._run is not None:
-            return f"already recording {self._run}; stop first"
+            self._unsubscribe()
+            self._last_discovery = 0.0   # 下一次 poll 立刻照新清單重訂
+        return f"{len(self._selected)} topic(s)"
+
+    def _cmd_start(self, run_name: str) -> str:
+        # 這兩種情況下什麼都沒開始,所以是 ERR 不是 OK —— UI 才會把它標紅。
+        if self._run is not None:
+            raise ValueError(f"already recording {self._run}; stop first")
+        if not self._selected:
+            raise ValueError("no topics selected; pick some topics first")
         folder = datetime.now().strftime("%Y-%m-%d_%H%M%S_") + run_name
         run_dir = self.logs_dir / folder
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -96,7 +115,7 @@ class LogNode(Node):
         self._run_dir = run_dir
         self._started_at = stamp()
         self._last_discovery = 0.0  # 下一次 poll 立刻訂閱
-        self.activity("SYS", f"recording to {run_dir}")
+        self.activity("SYS", f"recording {len(self._selected)} topic(s) to {run_dir}")
         return str(run_dir)
 
     def _cmd_mark(self, text: str) -> str:
@@ -108,6 +127,7 @@ class LogNode(Node):
         return text
 
     def _cmd_stop(self) -> str:
+        """關檔。**不產報告** —— 那是 `uv run visualization <data.csv>` 的事。"""
         if self._run is None:
             return "not recording"
         run_dir = self._run_dir
@@ -118,25 +138,22 @@ class LogNode(Node):
                 if handle is not None:
                     handle.close()
             self._data = self._writer = self._console = None
-        rows, run = self._rows, self._run
+        rows = self._rows
         self._run = self._run_dir = None
-
-        try:
-            target = report.write(run_dir, title=run)
-        except Exception as exc:  # 報告失敗不該把記錄好的資料一起賠掉
-            self.activity("ERR", f"report failed: {exc}")
-            return f"{run_dir} ({rows} rows) — report failed: {exc}"
-        self.activity("SYS", f"report written to {target}")
-        return f"{target} ({rows} rows)"
+        self.activity("SYS", f"closed {run_dir} ({rows} rows)")
+        return f"{run_dir / 'data.csv'} ({rows} rows)"
 
     # -------------------------------------------------------------- 訂閱
 
     def _interesting(self, topic: str) -> bool:
-        """站上除了 Log 自己以外的資料與 raw topic。"""
-        if topic.startswith(f"{self.prefix}/"):
+        """只有被 `record` 選到的 topic 才訂閱。
+
+        共通 topic(status / activity)擋掉是保險 —— 就算有人手滑選了也不該進檔案。
+        raw 是選得到的:它進 console.log,不進 data.csv。
+        """
+        if topic.startswith(f"{self.prefix}/") or is_common(topic):
             return False
-        # raw 也要訂:它進 console.log,不進 data.csv。
-        return not is_common(topic)
+        return topic in self._selected
 
     def _discover(self) -> None:
         try:
@@ -228,6 +245,7 @@ class LogNode(Node):
             "dir": str(self._run_dir) if self._run_dir else "",
             "rows": self._rows,
             "marks": self._marks,
+            "selected": list(self._selected),
             "topics": len(self._subs),
             "started": self._started_at,
         }, ensure_ascii=False).encode("utf-8"))
