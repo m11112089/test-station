@@ -220,12 +220,23 @@ def test_log_panel_sends_start_mark_stop(station, monkeypatch, tmp_path):
     assert sent == [("Log", "start burn_in_45C"), ("Log", "mark DUT power on")]
 
 
-def test_log_panel_ignores_an_empty_run_name(station, monkeypatch, tmp_path):
+def test_an_empty_run_name_still_starts(station, monkeypatch, tmp_path):
+    """按 Start 一定要有反應。逼人先想名字只會換來「按了沒反應」。"""
     sent = []
     monkeypatch.setattr(station, "call", lambda service, line: sent.append((service, line)))
     panel = LogPanel(station, tmp_path)
     panel._start()
-    assert sent == []
+    assert sent == [("Log", "start run")]
+
+
+def test_spaces_in_a_run_name_become_underscores(station, monkeypatch, tmp_path):
+    """run 名稱是命令的最後一個參數,帶空白會變成資料夾名裡的空白。"""
+    sent = []
+    monkeypatch.setattr(station, "call", lambda service, line: sent.append((service, line)))
+    panel = LogPanel(station, tmp_path)
+    panel._run_name.setText("burn in 45C")
+    panel._start()
+    assert sent == [("Log", "start burn_in_45C")]
 
 
 def test_log_panel_lists_runs_newest_first(station, tmp_path):

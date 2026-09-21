@@ -367,6 +367,10 @@ class PlanPanel(QGroupBox):
 
 # -------------------------------------------------------------- 6. Log 控制
 
+DEFAULT_RUN_NAME = "run"
+"""沒填 run 名稱時用這個。資料夾前面本來就有時間戳,不會撞。"""
+
+
 class LogPanel(QGroupBox):
     """Start / Mark / Stop、看目前錄到哪、開啟過去的報告。命令送給 `Log`。
 
@@ -397,7 +401,7 @@ class LogPanel(QGroupBox):
         self._notice.setTextFormat(Qt.RichText)
 
         self._run_name = QLineEdit()
-        self._run_name.setPlaceholderText("run 名稱,例如 burn_in_45C")
+        self._run_name.setPlaceholderText(f"選填,留空就叫 {DEFAULT_RUN_NAME}")
         self._run_name.returnPressed.connect(self._start)
         self._mark_text = QLineEdit()
         self._mark_text.setPlaceholderText("事件標記,例如 DUT power on")
@@ -436,9 +440,9 @@ class LogPanel(QGroupBox):
         refresh.clicked.connect(self.refresh_runs)
 
         form = QFormLayout()
-        form.addRow(self._run_name, self._start_btn)
-        form.addRow(self._mark_text, self._mark_btn)
-        form.addRow(self._stop_btn, QLabel(""))
+        form.addRow("run 名稱", self._row(self._run_name, self._start_btn))
+        form.addRow("事件標記", self._row(self._mark_text, self._mark_btn))
+        form.addRow("", self._row(self._stop_btn))
 
         buttons = QHBoxLayout()
         buttons.addWidget(open_btn)
@@ -455,11 +459,12 @@ class LogPanel(QGroupBox):
         layout = QVBoxLayout(self)
         layout.addWidget(self._state)
         layout.addWidget(self._notice)
-        layout.addWidget(QLabel("要記錄哪些 topic"))
+        layout.addWidget(QLabel("<b>1.</b> 要記錄哪些 topic"))
         layout.addWidget(self._topics)
         layout.addLayout(picker)
+        layout.addWidget(QLabel("<b>2.</b> 開始錄製"))
         layout.addLayout(form)
-        layout.addWidget(QLabel("過去的 run"))
+        layout.addWidget(QLabel("<b>3.</b> 過去的 run"))
         layout.addWidget(self._runs, 1)
         layout.addLayout(buttons)
 
@@ -468,6 +473,16 @@ class LogPanel(QGroupBox):
         station.reply.connect(self._on_reply)
         self._set_recording(False)
         self.refresh_runs()
+
+    @staticmethod
+    def _row(*widgets) -> QWidget:
+        box = QWidget()
+        line = QHBoxLayout(box)
+        line.setContentsMargins(0, 0, 0, 0)
+        for widget in widgets:
+            line.addWidget(widget)
+        line.addStretch()
+        return box
 
     # ------------------------------------------------------------ topic 選擇
 
@@ -612,9 +627,13 @@ class LogPanel(QGroupBox):
     # -------------------------------------------------------------- 命令
 
     def _start(self) -> None:
-        name = self._run_name.text().strip()
-        if name:
-            self._station.call(self.SERVICE, f"start {name}")
+        """run 名稱是選填的。
+
+        空白就用 `run` —— 資料夾本來就有時間戳前綴,不會撞在一起。
+        逼使用者先想一個名字,只會換來「按了沒反應」。
+        """
+        name = self._run_name.text().strip().replace(" ", "_") or DEFAULT_RUN_NAME
+        self._station.call(self.SERVICE, f"start {name}")
 
     def _mark(self) -> None:
         text = self._mark_text.text().strip()

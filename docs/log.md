@@ -33,11 +33,12 @@ Log node 把**選定的** topic 寫成 CSV;報告是事後另外產的。
    ```
 
    `status` / `activity` / `state` 不會出現(那是 node 自己的狀態)。勾完按「套用選擇」。
-2. 填 run 名稱,按 **Start**。
+2. 按 **Start**。**run 名稱可以留空** —— 留空就叫 `run`,資料夾前面本來就有時間戳
+   (`2026-09-21_113154_run`),不會撞在一起。名稱裡的空白會換成底線。
 3. 過程中按 **Mark** 打事件標記。
 4. 按 **Stop** 關檔。
 
-一個都沒勾就按 Start 會被擋下來:`ERR no topics selected`。
+一個都沒勾就按 Start 會被擋下來:`ERR no topics selected`,紅字顯示在狀態下面那一行。
 
 錄製中畫面顯示:
 

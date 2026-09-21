@@ -91,7 +91,8 @@ UI 自己開 eCAL session,**而且會順手把 Log node 帶起來** —— 忘�
 
 **Log** —— 上面是「要記錄哪些 topic」,**依 node 分層**:勾 node 那一列就是這台全選,
 只選一部分時那一列顯示成部分勾選。`status` / `activity` / `state` 不會出現。
-下面是 Start / Mark / Stop 與過去的 run。**Log 只錄勾到的那些**,一個都沒勾就 Start 會被擋。
+下面依序是 Start / Mark / Stop 與過去的 run —— 面板上標了 1 / 2 / 3,照著做就行。
+**Log 只錄勾到的那些**,一個都沒勾就 Start 會被擋(紅字)。run 名稱可以留空。
 
 勾選框**不會被 1 Hz 的狀態推播蓋掉** —— 只有 node 回報的選擇真的變了(launch 檔、
 測試計畫)畫面才跟著動,不然使用者勾第二個之前第一個就沒了。
