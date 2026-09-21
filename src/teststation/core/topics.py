@@ -34,6 +34,14 @@ def channel_of(topic: str) -> str:
     return topic.rsplit("/", 1)[-1]
 
 
+def node_of(topic: str) -> str:
+    """topic 去掉 channel 之後的部分,也就是發佈它的 node:
+
+    `BTM-4208SD/COM11/ch1` → `BTM-4208SD/COM11`,`Log/state` → `Log`。
+    """
+    return topic.rsplit("/", 1)[0]
+
+
 def is_common(topic: str) -> bool:
     """`status` / `activity` —— node 自己的狀態,任何人都不該把它當資料。"""
     return channel_of(topic) in COMMON_CHANNELS

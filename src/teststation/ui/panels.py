@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import webbrowser
+from contextlib import contextmanager
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
@@ -16,10 +17,10 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QComboBox, QDoubleSpinBox, QFormLayout, QGroupBox,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QPlainTextEdit, QPushButton, QSplitter, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget,
+    QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
-from ..core.topics import LOG_SERVICE, is_common
+from ..core.topics import LOG_SERVICE, channel_of, is_common, node_of
 from .bridge import Station
 
 STATUS_COLORS = {
@@ -383,6 +384,7 @@ class LogPanel(QGroupBox):
         self._station = station
         self._logs_dir = logs_dir
         self._recording = False
+        self._node_selection: list[str] | None = None
 
         self._state = QLabel("等待 Log node…")
         self._state.setWordWrap(True)
@@ -409,9 +411,12 @@ class LogPanel(QGroupBox):
         self._stop_btn.setStyleSheet(f"background-color: {ERROR_COLOR}; color: white;")
         self._stop_btn.clicked.connect(lambda: self._station.call(self.SERVICE, "stop"))
 
-        self._topics = QListWidget()
+        # 一個 node 一層,channel 掛在底下。node 那一列的勾選框就是「這台全選」。
+        self._topics = QTreeWidget()
         self._topics.setFont(MONO)
-        self._topics.setMaximumHeight(140)
+        self._topics.setMaximumHeight(180)
+        self._topics.setHeaderHidden(True)
+        self._topics.itemChanged.connect(self._on_item_changed)
         apply_topics = QPushButton("套用選擇")
         apply_topics.clicked.connect(self._apply_topics)
         all_topics = QPushButton("全選")
@@ -467,25 +472,76 @@ class LogPanel(QGroupBox):
     # ------------------------------------------------------------ topic 選擇
 
     def _set_topics(self, topics: list[str]) -> None:
-        """列出可以記錄的 topic。status / activity 不在其中 —— 那是 node 自己的狀態。"""
+        """依 node 分層列出可以記錄的 topic。
+
+        `status` / `activity` / `state` 不在其中 —— 那是 node 自己的狀態(README 2.2)。
+        整個 node 都沒有可記錄的 channel 時,那一層也不會出現。
+        """
         checked = set(self.selected_topics())
-        self._topics.clear()
+        grouped: dict[str, list[str]] = {}
         for topic in topics:
             if is_common(topic):
                 continue
-            item = QListWidgetItem(topic)
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(Qt.Checked if topic in checked else Qt.Unchecked)
-            self._topics.addItem(item)
+            grouped.setdefault(node_of(topic), []).append(topic)
+
+        with self._quiet():
+            self._topics.clear()
+            for node in sorted(grouped):
+                parent = QTreeWidgetItem([node])
+                # AutoTristate 讓 node 那一列自己反映「全選 / 部分 / 都沒選」。
+                parent.setFlags(parent.flags() | Qt.ItemIsUserCheckable
+                                | Qt.ItemIsAutoTristate)
+                parent.setCheckState(0, Qt.Unchecked)
+                for topic in sorted(grouped[node]):
+                    child = QTreeWidgetItem([channel_of(topic)])
+                    child.setData(0, Qt.UserRole, topic)
+                    child.setFlags(child.flags() | Qt.ItemIsUserCheckable)
+                    child.setCheckState(0, Qt.Checked if topic in checked
+                                        else Qt.Unchecked)
+                    parent.addChild(child)
+                self._topics.addTopLevelItem(parent)
+                parent.setExpanded(True)
+            # 訊號關著的時候 AutoTristate 不會動,所以父項狀態要自己補。
+            self._refresh_parents()
+
+    @contextmanager
+    def _quiet(self):
+        """重建樹時把 itemChanged 關掉,不然父子連動會自己打自己。"""
+        self._topics.blockSignals(True)
+        try:
+            yield
+        finally:
+            self._topics.blockSignals(False)
+
+    def _leaves(self):
+        for i in range(self._topics.topLevelItemCount()):
+            parent = self._topics.topLevelItem(i)
+            for j in range(parent.childCount()):
+                yield parent.child(j)
 
     def selected_topics(self) -> list[str]:
-        return [self._topics.item(i).text() for i in range(self._topics.count())
-                if self._topics.item(i).checkState() == Qt.Checked]
+        return [leaf.data(0, Qt.UserRole) for leaf in self._leaves()
+                if leaf.checkState(0) == Qt.Checked]
+
+    def _on_item_changed(self, item: QTreeWidgetItem, _column: int) -> None:
+        """勾 node 那一列 = 這台全選 / 全不選。
+
+        Qt 的 AutoTristate 只做子 → 父(父自己顯示成部分勾選),父 → 子要自己來。
+        """
+        if item.childCount() == 0 or item.checkState(0) == Qt.PartiallyChecked:
+            return
+        with self._quiet():
+            for i in range(item.childCount()):
+                item.child(i).setCheckState(0, item.checkState(0))
 
     def _check_all(self, checked: bool) -> None:
         state = Qt.Checked if checked else Qt.Unchecked
-        for i in range(self._topics.count()):
-            self._topics.item(i).setCheckState(state)
+        with self._quiet():
+            for i in range(self._topics.topLevelItemCount()):
+                parent = self._topics.topLevelItem(i)
+                parent.setCheckState(0, state)
+                for j in range(parent.childCount()):
+                    parent.child(j).setCheckState(0, state)
 
     def _apply_topics(self) -> None:
         chosen = self.selected_topics()
@@ -495,18 +551,39 @@ class LogPanel(QGroupBox):
             return
         self._station.call(self.SERVICE, "record " + " ".join(chosen))
 
-    def _show_selection(self, selected: list[str]) -> None:
-        """把 Log 回報的選擇反映到勾選框 —— 設定可能來自 launch 檔,不是這裡按的。"""
-        wanted = set(selected)
-        for i in range(self._topics.count()):
-            item = self._topics.item(i)
-            item.setCheckState(Qt.Checked if item.text() in wanted else Qt.Unchecked)
+    def _sync_selection(self, reported: list[str]) -> None:
+        """把 Log 回報的選擇反映到勾選框。
+
+        **只在它真的變了的時候動**。`Log/state` 是 1 Hz 推過來的,每次都重寫的話
+        使用者勾第二個框之前,第一個就被蓋回去了 —— 畫面會跟人搶輸入。
+
+        變動的來源可能是 launch 檔、測試計畫,或這個面板自己按下「套用選擇」;
+        不管哪一種,node 說了算,所以同步過去是對的。
+        """
+        if reported == self._node_selection:
+            return
+        self._node_selection = list(reported)
+        wanted = set(reported)
+        with self._quiet():
+            for leaf in self._leaves():
+                leaf.setCheckState(0, Qt.Checked
+                                   if leaf.data(0, Qt.UserRole) in wanted
+                                   else Qt.Unchecked)
+            self._refresh_parents()
+
+    def _refresh_parents(self) -> None:
+        """訊號關著的時候 AutoTristate 不會動,所以父項的狀態手動補一次。"""
+        for i in range(self._topics.topLevelItemCount()):
+            parent = self._topics.topLevelItem(i)
+            states = {parent.child(j).checkState(0) for j in range(parent.childCount())}
+            parent.setCheckState(0, states.pop() if len(states) == 1
+                                 else Qt.PartiallyChecked)
 
     # ------------------------------------------------------------ 狀態顯示
 
     def _on_state(self, state: dict) -> None:
-        if not self._recording and "selected" in state:
-            self._show_selection(state["selected"])
+        if "selected" in state:
+            self._sync_selection(state["selected"])
         recording = bool(state.get("recording"))
         if recording:
             self._state.setText(

@@ -57,7 +57,7 @@ set_channel ch3 SoC_heatsink
 
 到「**Log**」分頁:
 
-1. **勾選要記錄的 topic** —— 只錄勾到的
+1. **勾選要記錄的 topic** —— 依 node 分層,勾 node 那一列就是這台全選
 2. 填 run 名稱,按 **Start**
 3. 過程中按 **Mark** 打事件標記(例如「DUT power on」)
 4. 按 **Stop** 關檔
