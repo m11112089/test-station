@@ -27,6 +27,10 @@ nodes:
 
 **node 是 UI 的子行程。** 關掉 UI 就是結束測試:反向順序關閉,Log 最後關,
 確保它收得到其他 node 的最後資料。
+
+**Log 由 UI 一開就起,不經過 launch 檔。** 忘記把它列進去就整場沒錄到,那代價太大;
+而且它沒有 port、不接在任何線上,本來就不像站上的一台裝置。launch 檔裡若還寫著
+`run: log` 會被跳過(否則會有兩個 Log 搶同一個 service 名稱)。
 """
 
 from __future__ import annotations
@@ -42,6 +46,8 @@ from ..core.topics import LOG_SERVICE
 from .bridge import Station
 
 DEFAULT_READY_TIMEOUT = 30.0
+LOG_RUN = "log"
+"""`run:` 的名字。UI 自己起一個,所以 launch 檔裡的同名條目會被跳過。"""
 
 NODE_MODULE = "teststation.nodes.{run}.node"
 """`run: btm_4208sd` → `python -m teststation.nodes.btm_4208sd.node`。
@@ -74,6 +80,7 @@ class Launcher(QObject):
         self._failed = 0
         self._ready_timeout = DEFAULT_READY_TIMEOUT
         self._processes: list[list] = []   # [label, QProcess],label 會被改寫
+        self._log_process: QProcess | None = None
 
         self._before: set[str] = set()
         self._settings: list[str] = []
@@ -88,6 +95,17 @@ class Launcher(QObject):
     @property
     def running(self) -> bool:
         return bool(self._processes)
+
+    # --------------------------------------------------- 一直都在的 Log
+
+    def start_log(self) -> None:
+        """UI 起來就把 Log 帶起來。它不在 `_processes` 裡,所以永遠最後關。"""
+        if self._log_process is not None:
+            return
+        self._log_process = self._spawn_process(LOG_RUN, [])
+        self._log_process.readyReadStandardOutput.connect(
+            lambda: self._drain(self._log_process, LOG_SERVICE))
+        self.output.emit(f"--- starting {LOG_RUN}")
 
     @property
     def station(self) -> Station:
@@ -133,6 +151,12 @@ class Launcher(QObject):
             return
         spec = self._specs[self._index]
         run = spec["run"]
+        if run == LOG_RUN:
+            # UI 已經有一個 Log 了。兩個會搶同一個 service 名稱,也會各寫各的檔。
+            self.output.emit(f"--- skipping {LOG_RUN}(UI 已經起了一個)")
+            self._apply_to_log(spec.get("setting") or [])
+            self._advance()
+            return
         args = spec.get("args", "")
         arguments = args.split() if isinstance(args, str) else [str(a) for a in args]
 
@@ -141,18 +165,21 @@ class Launcher(QObject):
         self.output.emit(f"--- starting {run} {args}".rstrip())
         self.state.emit(f"啟動中:{run}", len(self._processes), self._failed)
 
+        process = self._spawn_process(run, arguments)
+        process.readyReadStandardOutput.connect(
+            lambda p=process, label=run: self._drain(p, label))
+        self._processes.append([run, process])
+        self._waiting_for = None
+        self._deadline.start(int(self._ready_timeout * 1000))
+
+    def _spawn_process(self, run: str, arguments: list[str]) -> QProcess:
         process = QProcess(self)
         process.setProgram(sys.executable)
         process.setArguments(["-u", "-m", NODE_MODULE.format(run=run), *arguments])
         process.setWorkingDirectory(str(self._root))
         process.setProcessChannelMode(QProcess.MergedChannels)
-        process.readyReadStandardOutput.connect(
-            lambda p=process, label=run: self._drain(p, label))
         process.start()
-
-        self._processes.append([run, process])
-        self._waiting_for = None
-        self._deadline.start(int(self._ready_timeout * 1000))
+        return process
 
     def _drain(self, process: QProcess, label: str) -> None:
         text = bytes(process.readAllStandardOutput()).decode("utf-8", "replace")
@@ -182,6 +209,11 @@ class Launcher(QObject):
             self._apply_settings(node)
             self._advance()
 
+    def _apply_to_log(self, settings: list[str]) -> None:
+        """launch 檔裡 log 條目的設定仍要生效 —— 跳過的是行程,不是設定。"""
+        self._settings = settings
+        self._apply_settings(LOG_SERVICE)
+
     def _apply_settings(self, node: str) -> None:
         """把 launch 檔裡這個 node 的設定送過去。失敗只警示,不中止整站。"""
         for line in self._settings:
@@ -210,21 +242,28 @@ class Launcher(QObject):
 
     # ------------------------------------------------------------- 關閉
 
-    def shutdown(self) -> None:
-        """反向順序關閉,Log 最後關(README 3.1)。
+    def shutdown(self, keep_log: bool = False) -> None:
+        """反向順序關閉儀器。`keep_log=False` 時連 Log 一起收掉(README 3.1)。
 
-        Log 先收到一個 `stop` 命令再被關掉 —— 那是它關檔與產生報告的正常路徑。
-        其他 node 已經先走了,所以 Log 這時收到的確實是整場測試的最後資料。
+        Log **一定最後關**,而且先收到一個 `stop` 命令 —— 那是它關檔的正常路徑。
+        其他 node 已經先走了,所以它這時收到的確實是整場測試的最後資料。
+
+        關掉整站但留著 Log(`keep_log=True`)是為了「關閉整站」按鈕:
+        使用者只是想收掉儀器,不是要關掉 UI。
         """
         self._deadline.stop()
         for label, process in reversed(self._processes):
             if process.state() == QProcess.NotRunning:
                 continue
             self.output.emit(f"--- stopping {label}")
-            if label == LOG_SERVICE:
-                self._stop_recording()
             self._end(label, process)
         self._processes.clear()
+
+        if not keep_log and self._log_process is not None:
+            self.output.emit(f"--- stopping {LOG_SERVICE}")
+            self._stop_recording()
+            self._end(LOG_SERVICE, self._log_process)
+            self._log_process = None
         self.state.emit("已關閉", 0, 0)
 
     def _stop_recording(self) -> None:

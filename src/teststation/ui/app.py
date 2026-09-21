@@ -19,8 +19,9 @@ from PySide6.QtWidgets import (
 )
 
 from ..client import session
+from ..core.topics import LOG_SERVICE
 from .bridge import Station
-from .launch import Launcher
+from .launch import LOG_RUN, Launcher
 from .panels import (
     MONO, CommandPanel, ConsolePanel, LogPanel, NodeList, PlanPanel, ReportPanel,
     TopicToolsPanel, ValueTable,
@@ -53,7 +54,7 @@ class LaunchBar(QWidget):
         self._choose.clicked.connect(self._pick)
         self._stop = QPushButton("關閉整站")
         self._stop.setEnabled(False)
-        self._stop.clicked.connect(self._launcher.shutdown)
+        self._stop.clicked.connect(lambda: self._launcher.shutdown(keep_log=True))
         self._save = QPushButton("存成 launch 檔")
         self._save.setToolTip("把現在的 node 與設定值存下來,下次直接開")
         self._save.clicked.connect(self._save_launch)
@@ -106,8 +107,8 @@ class LaunchBar(QWidget):
         下次開檔也不會意外送電。
         """
         specs = self._launcher.specs
-        if not specs:
-            self._state.setText("這次不是從 launch 檔啟動的,沒有 node 清單可存")
+        if not specs and not self._launcher.station.settings:
+            self._state.setText("還沒有東西可以存 —— 先啟動整站或設定一些值")
             return
         path, _filter = QFileDialog.getSaveFileName(
             self, "存成 launch 檔", str(self._root / "launch" / "station.yaml"),
@@ -116,8 +117,15 @@ class LaunchBar(QWidget):
             return
 
         settings = self._launcher.station.settings
+        # Log 是 UI 自己起的,不在 specs 裡,但它的設定(要錄哪些 topic)要存下來,
+        # 否則下次開檔會變成什麼都沒選。
         nodes = []
+        log_settings = sorted(settings.get(LOG_SERVICE, {}).values())
+        if log_settings:
+            nodes.append({"run": LOG_RUN, "setting": log_settings})
         for spec in specs:
+            if spec["run"] == LOG_RUN:
+                continue        # 上面已經寫過一筆了,而且啟動時本來就會跳過
             entry = {"run": spec["run"]}
             if spec.get("args"):
                 entry["args"] = spec["args"]
@@ -135,8 +143,11 @@ class LaunchBar(QWidget):
         kept = sum(len(n.get("setting", ())) for n in nodes)
         self._state.setText(f"已存 {path}({len(nodes)} 個 node、{kept} 筆設定)")
 
+    def start_log(self) -> None:
+        self._launcher.start_log()
+
     def shutdown(self) -> None:
-        """UI 關掉時一併收掉所有 node(README 3.1 的反向順序)。"""
+        """UI 關掉時一併收掉所有 node,Log 最後關(README 3.1 的反向順序)。"""
         self._launcher.shutdown()
 
 
@@ -181,6 +192,8 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(main)
 
         self._nodes.selected.connect(self._on_node)
+        # Log 一開始就起來 —— 忘記啟動它的代價是整場測試沒錄到。
+        self._launch.start_log()
         self.statusBar().showMessage("等待 node 出現…")
         self.station.nodes_changed.connect(
             lambda names: self.statusBar().showMessage(
@@ -195,6 +208,13 @@ class MainWindow(QMainWindow):
     def _on_node(self, node: str) -> None:
         self._commands.set_node(node)
         self._console.set_node(node)
+        # Log 有自己的面板(勾選 topic、run 清單),通用命令按鈕做不到那些,
+        # 所以選到它就切過去。選回一般裝置再切回命令面板。
+        # 只在這兩個「跟著選取走」的分頁之間換 —— 使用者正在看報告或數值時不打擾他。
+        per_node = (self._log, self._commands)
+        if self._tabs.currentWidget() in per_node:
+            self._tabs.setCurrentWidget(
+                self._log if node == LOG_SERVICE else self._commands)
 
     def closeEvent(self, event) -> None:
         self._launch.shutdown()

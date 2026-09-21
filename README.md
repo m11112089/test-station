@@ -35,7 +35,9 @@ uv run ui
 
 ### 1. 啟動整站
 
-到「**啟動整站**」分頁,選一份 `launch/*.yaml`。node 會**依序**起來,
+**Log 在 UI 一開就自己起來了**,不用管它 —— 忘記啟動它的代價是整場測試沒錄到。
+
+到「**啟動整站**」分頁,選一份 `launch/*.yaml` 把儀器帶起來。node 會**依序**起來,
 每個都等它的燈變綠才起下一個(理由見第二部分 3)。
 
 > **關掉 UI 就是結束測試。** node 是 UI 的子行程,關窗等於整站關閉。
@@ -84,9 +86,9 @@ uv run visualization logs/2026-09-21_103723_burn_in_45C/data.csv
 
 | 分頁 | 做什麼 |
 |---|---|
-| Node 清單(左) | 站上有哪些 node,燈號就是狀態 |
+| Node 清單(左) | 站上有哪些 node,燈號就是狀態。點 Log 會切到 Log 分頁 |
 | 命令 | 那台 node 能下的命令,按鈕自動長出來 |
-| 即時數值 | 所有量測值的最新數字 |
+| 即時數值 | 所有量測值的最新數字與**量測當下的時間戳** |
 | DUT console | DUT 的原始收發 |
 | 測試計畫 | 選腳本、Run / Abort |
 | Log | 勾 topic、Start / Mark / Stop、過去的 run |
@@ -245,13 +247,10 @@ uv run pfr_100l                  # 自動掃描
 
 ```yaml
 # launch/burn_in_station.yaml
-nodes:
-  - run: log
-    setting:                          # node ready 之後送過去的設定
-      - record BTM-4208SD/COM7/ch3 PFR-100L/COM20/voltage
+nodes:                                # 不用列 log,UI 會自己起
   - run: pfr_100l
     args: --port COM20                # 指定 port,不掃描
-    setting:
+    setting:                          # node ready 之後送過去的設定
       - set_voltage 12
   - run: pfr_100l                     # 第二台:自動掃描,跳過 COM20
   - run: btm_4208sd
@@ -264,6 +263,8 @@ nodes:
 ready_timeout: 30                     # 每個 node 最多等 30 s 變 ok
 ```
 
+- **Log 不列在 launch 檔裡** —— UI 一開就起了一個。檔案裡若還寫著 `run: log` 會被跳過
+  (兩個會搶同一個 service),但它的 `setting` 仍然會送出去。
 - 依列出的順序啟動,**等前一個 node 的 `status` 變成 `ok`(掃描完成、port 已佔住)才啟動下一個**。
 - 某 node 超過 `ready_timeout` 仍未 `ok`:紅字警示,**繼續啟動下一個**,不整批中止。
 - 各 node 的輸出加前綴合併顯示,前綴在 node 註冊完成後換成它真正的 service 名稱。
@@ -271,7 +272,8 @@ ready_timeout: 30                     # 每個 node 最多等 30 s 變 ok
   —— `output_on` 那種動作寫進來,開檔就會送電。
 - **node 是 UI 的子行程:關掉 UI 就是結束測試。** 以反向順序關閉,Log 最後關;
   Log 會先收到一個 `stop` 把檔案正常關好,才被關掉。
-- UI 的「存成 launch 檔」會把目前的 node 與設定值寫成這種檔案。
+- UI 的「存成 launch 檔」會把目前的 node 與設定值寫成這種檔案,
+  **包含一筆 `run: log`** 帶著「要錄哪些 topic」,這樣下次開檔選擇會自動回來。
 - 不使用 eCAL Sys:它只能「等固定秒數」,不理解 `status` 語意,且需安裝完整版 eCAL。
 
 ## 4. Node 說明

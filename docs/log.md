@@ -18,7 +18,8 @@ Log node 把**選定的** topic 寫成 CSV;報告是事後另外產的。
 
 ## 錄一次
 
-在 UI 的 **Log 分頁**:
+**Log node 在 UI 一開就起來了**,不用另外啟動。在 UI 的 **Log 分頁**
+(或在左邊 node 清單點 `Log`,會直接切過去):
 
 1. **勾選要記錄的 topic** —— 清單是站上目前有在發的 topic;`status` / `activity` /
    `state` 不會出現(那是 node 自己的狀態)。勾完按「套用選擇」。

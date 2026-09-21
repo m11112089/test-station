@@ -56,9 +56,18 @@ def test_status_colours():
 
 def test_node_list_follows_discovery(station):
     panel = NodeList(station)
-    station.nodes_changed.emit(["BTM-4208SD/COM11", "Log"])
-    assert [panel._list.item(i).text() for i in range(2)] == ["BTM-4208SD/COM11", "Log"]
+    station.nodes_changed.emit(["BTM-4208SD/COM11", "PFR-100L/COM20"])
+    assert [panel._list.item(i).text() for i in range(2)] == [
+        "BTM-4208SD/COM11", "PFR-100L/COM20"]
     assert panel.current() == "BTM-4208SD/COM11"
+
+
+def test_log_is_listed_like_any_node(station):
+    """Log 列在清單裡(看得到燈號),點它會切到 Log 分頁 —— 那部分由主視窗接手。"""
+    panel = NodeList(station)
+    station.nodes_changed.emit(["BTM-4208SD/COM11", "Log"])
+    listed = [panel._list.item(i).text() for i in range(panel._list.count())]
+    assert listed == ["BTM-4208SD/COM11", "Log"]
 
 
 def test_node_list_keeps_the_selection_across_refreshes(station):

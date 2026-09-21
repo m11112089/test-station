@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from ..core.topics import is_common
+from ..core.topics import LOG_SERVICE, is_common
 from .bridge import Station
 
 STATUS_COLORS = {
@@ -40,7 +40,11 @@ def status_color(status: str) -> QColor:
 # ------------------------------------------------------------- 1. Node 清單
 
 class NodeList(QGroupBox):
-    """從 eCAL 註冊資訊自動列出,燈號依 `status` topic。"""
+    """從 eCAL 註冊資訊自動列出,燈號依 `status` topic。
+
+    Log 也列在這裡(看得到它的燈號與 activity),但**點它會切到「Log」分頁** ——
+    控制它的地方只有一個,不會變成通用按鈕與專用面板兩套入口。
+    """
 
     selected = Signal(str)
 
@@ -200,9 +204,13 @@ class CommandPanel(QGroupBox):
 # --------------------------------------------------------- 3. 即時數值表
 
 class ValueTable(QGroupBox):
-    """所有資料 topic 的最新值、`name`、單位、更新時間。"""
+    """所有資料 topic 的最新值、`name`、單位、時間戳。
 
-    COLUMNS = ["TOPIC", "NAME", "VALUE", "UNIT", "UPDATED"]
+    `TIME` 是 **node 在量測當下蓋的時間戳**(payload 的 `t`),不是 UI 收到的時間 ——
+    跨 PC 時網路延遲不該讓畫面上的時間跟記錄下來的對不起來。
+    """
+
+    COLUMNS = ["TOPIC", "NAME", "VALUE", "UNIT", "TIME"]
 
     def __init__(self, station: Station) -> None:
         super().__init__("即時數值")
