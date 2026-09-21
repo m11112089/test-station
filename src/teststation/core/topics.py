@@ -13,6 +13,9 @@ node、`st`、UI 都 import 它 —— 這三個曾經各寫一份,而且寫得�
 
 from __future__ import annotations
 
+LOG_SERVICE = "Log"
+"""Log node 的固定 service 名稱(README 2.1)。UI 與 launcher 都要用到。"""
+
 STATUS = "status"
 ACTIVITY = "activity"
 RAW = "raw"

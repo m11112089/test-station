@@ -1,6 +1,6 @@
-"""共用層的測試:`core.topics` 的契約判斷式、`cli.common` 的純函式。
+"""共用層的測試:`core.topics` 的契約判斷式、`client` 的純函式。
 
-這個檔存在的理由是**釘住「只有一份實作」**。這些東西曾經在 node、`st`、UI
+這個檔存在的理由是**釘住「只有一份實作」**。這些東西曾經在 node、CLI、UI
 各寫一份,而且寫得不一樣;誰想再抄一份,這裡的測試不會攔他,但至少
 下一個人看得到正確的那份在哪。
 """
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from teststation.cli import common
+from teststation import client as common
 from teststation.core import topics
 
 

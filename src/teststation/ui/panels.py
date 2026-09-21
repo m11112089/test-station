@@ -525,7 +525,7 @@ class LogPanel(QGroupBox):
 class TopicToolsPanel(QGroupBox):
     """量發佈頻率、餵假資料 —— 跟 `st topic hz` / `st topic pub` 同一套。
 
-    統計與 payload 處理都在 `cli.common`,這裡只負責選 topic、顯示、觸發。
+    統計與 payload 處理都在 `teststation.client`,這裡只負責選 topic、顯示、觸發。
     """
 
     def __init__(self, station: Station) -> None:

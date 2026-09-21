@@ -13,11 +13,8 @@
 | `set_channel` | `<channel> <name>` | (共通 method,Log 用不到) | |
 | `reconnect` | — | (共通 method,Log 沒有裝置可重連) | |
 
-```
-st service call Log "start burn_in_45C"
-st service call Log "mark DUT power on"
-st service call Log "stop"
-```
+UI 的 **Log 分頁**就是這三個按鈕。測試計畫則用 `teststation.control` 的
+`start()` / `mark()` / `stop()` —— 送出的字串完全一樣。
 
 重複 `start`、對著沒在錄的 Log 下 `mark` / `stop` 都會回 `OK` 加一句說明,不會壞掉。
 
@@ -77,4 +74,5 @@ Log 要自己找出站上有哪些資料 topic,所以它是**唯一需要 eCAL `
 (`components = ecal.init.ALL`)。少了它會訂不到任何 topic,而檔案照開、報告照產,
 只是裡面沒有資料 —— 這種情況 `Log/activity` 會出現 `discovery failed` 的紅字。
 
-`st launch` 裡 Log 要放第一個,這樣反向關閉時它最後關,收得到其他 node 的最後資料。
+launch 檔裡 Log 要放第一個,這樣反向關閉時它最後關,收得到其他 node 的最後資料。
+關站時 launcher 會先送它一個 `stop`,所以錄到一半關站也會有報告。

@@ -1,0 +1,191 @@
+"""依序啟動整站(README 3.1)。
+
+類似 ros launch,但**不是等固定秒數,而是等 node 的 `status` 變成 `ok`**。
+這件事很重要:node 未指定 `--port` 時會掃描所有 COM,掃描期間會暫時佔住別人的 port,
+同時啟動會讓彼此誤判成「使用中」而跳過。所以下一個 node 必須等前一個掃完、port 佔住了才起。
+
+(這也是 README 3.1 說明不使用 eCAL Sys 的原因:它只能等固定秒數,不理解 `status` 語意。)
+
+就緒判定**直接用 `Station` 現成的探索與 status 訂閱**,不自己再接一次 eCAL ——
+UI 本來就一直在收這兩樣東西。
+
+**node 是 UI 的子行程。** 關掉 UI 就是結束測試:反向順序關閉,Log 最後關,
+確保它收得到其他 node 的最後資料。
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import yaml
+from PySide6.QtCore import QObject, QProcess, QTimer, Signal
+
+from .. import client
+from ..core.topics import LOG_SERVICE
+from .bridge import Station
+
+DEFAULT_READY_TIMEOUT = 30.0
+
+NODE_MODULE = "teststation.nodes.{run}.node"
+"""`run: btm_4208sd` → `python -m teststation.nodes.btm_4208sd.node`。
+
+走模組路徑而不是 console script:名字不會跟系統上別的指令撞,而且 UI 用哪個
+Python 跑,node 就用同一個。
+"""
+
+
+class Launcher(QObject):
+    """把一份 launch yaml 依序跑起來,一次一個 node。
+
+    每個步驟都由 signal 推動,沒有阻塞的迴圈 —— 畫面在啟動過程中照樣能動。
+    """
+
+    output = Signal(str)
+    """要顯示在畫面上的一行(已加好前綴)。"""
+
+    state = Signal(str, int, int)
+    """(說明文字, 已啟動, 未就緒)。"""
+
+    finished = Signal()
+
+    def __init__(self, station: Station, root: Path, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._station = station
+        self._root = root
+        self._specs: list[dict] = []
+        self._index = 0
+        self._failed = 0
+        self._ready_timeout = DEFAULT_READY_TIMEOUT
+        self._processes: list[list] = []   # [label, QProcess],label 會被改寫
+
+        self._before: set[str] = set()
+        self._waiting_for: str | None = None
+        self._deadline = QTimer(self)
+        self._deadline.setSingleShot(True)
+        self._deadline.timeout.connect(self._give_up)
+
+        station.nodes_changed.connect(self._on_nodes)
+        station.node_status.connect(self._on_status)
+
+    @property
+    def running(self) -> bool:
+        return bool(self._processes)
+
+    # ------------------------------------------------------------- 啟動
+
+    def start(self, config: Path) -> None:
+        document = yaml.safe_load(config.read_text(encoding="utf-8")) or {}
+        self._specs = document.get("nodes") or []
+        if not self._specs:
+            self.output.emit(f"{config} 裡沒有 nodes")
+            self.finished.emit()
+            return
+        self._ready_timeout = float(document.get("ready_timeout", DEFAULT_READY_TIMEOUT))
+        self._index = 0
+        self._failed = 0
+        self._next()
+
+    def _next(self) -> None:
+        if self._index >= len(self._specs):
+            self.state.emit("全部啟動完成", len(self._processes), self._failed)
+            self.finished.emit()
+            return
+        spec = self._specs[self._index]
+        run = spec["run"]
+        args = spec.get("args", "")
+        arguments = args.split() if isinstance(args, str) else [str(a) for a in args]
+
+        self._before = set(self._station.nodes)
+        self.output.emit(f"--- starting {run} {args}".rstrip())
+        self.state.emit(f"啟動中:{run}", len(self._processes), self._failed)
+
+        process = QProcess(self)
+        process.setProgram(sys.executable)
+        process.setArguments(["-u", "-m", NODE_MODULE.format(run=run), *arguments])
+        process.setWorkingDirectory(str(self._root))
+        process.setProcessChannelMode(QProcess.MergedChannels)
+        process.readyReadStandardOutput.connect(
+            lambda p=process, label=run: self._drain(p, label))
+        process.start()
+
+        self._processes.append([run, process])
+        self._waiting_for = None
+        self._deadline.start(int(self._ready_timeout * 1000))
+
+    def _drain(self, process: QProcess, label: str) -> None:
+        text = bytes(process.readAllStandardOutput()).decode("utf-8", "replace")
+        for line in text.splitlines():
+            if line.strip():
+                self.output.emit(f"[{label}] {line}")
+
+    # ------------------------------------------------------------- 就緒
+
+    def _on_nodes(self, nodes: list[str]) -> None:
+        """新的 service 出現了 —— 把前綴換成它真正的名字,然後等它變 ok。"""
+        if not self._deadline.isActive() or self._waiting_for is not None:
+            return
+        new = set(nodes) - self._before
+        if not new:
+            return
+        self._waiting_for = sorted(new)[0]
+        if self._processes:
+            self._processes[-1][0] = self._waiting_for
+
+    def _on_status(self, node: str, status: str) -> None:
+        if node != self._waiting_for or not self._deadline.isActive():
+            return
+        if status == "ok":
+            self._deadline.stop()
+            self.output.emit(f"[{node}] ready")
+            self._advance()
+
+    def _give_up(self) -> None:
+        # README 3.1:紅字警示,但**繼續啟動下一個**,不整批中止。
+        label = self._waiting_for or self._specs[self._index]["run"]
+        self.output.emit(
+            f"[{label}] 超過 {self._ready_timeout:.0f}s 仍未 ok —— 繼續啟動下一個")
+        self._failed += 1
+        self._advance()
+
+    def _advance(self) -> None:
+        self._index += 1
+        self._waiting_for = None
+        self._next()
+
+    # ------------------------------------------------------------- 關閉
+
+    def shutdown(self) -> None:
+        """反向順序關閉,Log 最後關(README 3.1)。
+
+        Log 先收到一個 `stop` 命令再被關掉 —— 那是它關檔與產生報告的正常路徑。
+        其他 node 已經先走了,所以 Log 這時收到的確實是整場測試的最後資料。
+        """
+        self._deadline.stop()
+        for label, process in reversed(self._processes):
+            if process.state() == QProcess.NotRunning:
+                continue
+            self.output.emit(f"--- stopping {label}")
+            if label == LOG_SERVICE:
+                self._stop_recording()
+            self._end(label, process)
+        self._processes.clear()
+        self.state.emit("已關閉", 0, 0)
+
+    def _stop_recording(self) -> None:
+        try:
+            reply = client.call(LOG_SERVICE, "stop", connect_timeout=2.0)
+        except Exception as exc:                 # Log 已經不理人了就直接往下走
+            self.output.emit(f"[{LOG_SERVICE}] stop 失敗:{exc}")
+            return
+        self.output.emit(f"[{LOG_SERVICE}] {reply}")
+
+    @staticmethod
+    def _end(label: str, process: QProcess) -> None:
+        """Windows 上 `terminate()` 對 console 程式沒有作用(它送的是視窗訊息),
+        等滿逾時只是浪費時間,所以直接 `kill()`。
+
+        資料不會因此損失:Log 是逐筆 flush 的,而且上面已經先讓它正常關檔了。
+        """
+        process.kill()
+        process.waitForFinished(5000)

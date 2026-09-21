@@ -1,7 +1,11 @@
-"""`st` 共用的東西:eCAL session、探索、service 呼叫、payload 格式化。
+"""站台的 client 層:eCAL session、探索、service 呼叫、payload 處理。
 
-命令來源是平權的(README 1.2):`st` 送出的字串跟 UI 按鈕、測試計畫送的完全一樣,
-所以這裡沒有任何「CLI 專用」的捷徑 —— 一律走 `<device>/<port>` 的 `cmd` method。
+**不依賴 Qt。** 這一點是刻意的:UI 用它,測試計畫的 `control` runner 也要用它,
+而那是一個無頭的 Python 腳本(README 4)。把這些搬進 `ui/` 會逼 runner 去 import
+PySide6,或是再寫一份一模一樣的 ServiceClient 程式碼。
+
+命令來源是平權的(README 1.2):UI 按鈕與測試計畫送出的字串完全一樣,
+走的也是同一個 `<device>/<port>` 的 `cmd` method —— 這裡沒有任何捷徑。
 """
 
 from __future__ import annotations
@@ -15,8 +19,8 @@ from dataclasses import dataclass
 
 import ecal.nanobind_core as ecal
 
-from ..core.node import CMD_METHOD
-from ..core.payload import stamp
+from .core.node import CMD_METHOD
+from .core.payload import stamp
 
 SETTLE = 1.0
 """eCAL 註冊資訊要一點時間才會傳開;列表類命令先等這麼久再問。"""
@@ -27,12 +31,12 @@ JSON = ecal.DataTypeInformation(name="json", encoding="utf-8")
 
 
 @contextmanager
-def session(unit_name: str = "st"):
+def session(unit_name: str):
     """包住 eCAL 的 initialize/finalize,確保離開時一定收乾淨。
 
     **必須帶 `init.ALL`。** 預設的 `init.DEFAULT`(55)**不含 MONITORING**(8),
     少了它 `get_monitoring()` 會直接丟 `RuntimeError: Failed to get monitoring struct.`。
-    node 不需要 monitoring,所以只有 st 這種查詢端要開。
+    node 不需要 monitoring,所以只有 UI 這種查詢端要開。
     """
     ecal.initialize(unit_name, ecal.init.ALL)
     try:
@@ -42,56 +46,6 @@ def session(unit_name: str = "st"):
 
 
 # ---------------------------------------------------------------------- 探索
-
-@dataclass(frozen=True)
-class NodeInfo:
-    name: str
-    """service 名稱,也就是 node 名稱:`BTM-4208SD/COM11`、`Log`。"""
-    host: str
-    pid: int
-    unit: str
-    status: str = "?"
-
-
-def list_nodes(settle: float = SETTLE, status_wait: float = 3.0) -> list[NodeInfo]:
-    """列出站上的 node,並收一次 status 心跳當燈號。
-
-    心跳是 1 Hz,但新建的 subscriber 跟 publisher 配對還要約 2 秒,所以不是等固定
-    秒數 —— **收齊所有 node 就立刻回**,收不齊才等到 `status_wait`。
-    """
-    time.sleep(settle)
-    servers = {}
-    for server in ecal.monitoring.get_monitoring().servers:
-        servers[server.service_name] = NodeInfo(
-            name=server.service_name,
-            host=server.host_name,
-            pid=server.process_id,
-            unit=server.unit_name,
-        )
-    if not servers:
-        return []
-
-    statuses: dict[str, str] = {}
-    subs = []
-    for name in servers:
-        sub = ecal.Subscriber(f"{name}/status")
-        sub.set_receive_callback(
-            (lambda n: lambda _t, _dt, data, *_: statuses.__setitem__(
-                n, data.buffer.decode("utf-8", "replace")))(name)
-        )
-        subs.append(sub)
-    deadline = time.monotonic() + status_wait
-    while time.monotonic() < deadline and len(statuses) < len(servers):
-        time.sleep(0.05)
-    for sub in subs:
-        sub.remove_receive_callback()
-
-    return sorted(
-        (NodeInfo(n.name, n.host, n.pid, n.unit, statuses.get(n.name, "no heartbeat"))
-         for n in servers.values()),
-        key=lambda n: n.name,
-    )
-
 
 def list_topics(settle: float = SETTLE) -> list[ecal.monitoring.Topic]:
     """列出所有被發佈的 topic。"""
@@ -148,48 +102,6 @@ def describe(service: str) -> list[dict]:
     if not reply.startswith("OK "):
         raise ServiceUnavailable(f"describe failed: {reply}")
     return json.loads(reply[3:])
-
-
-# --------------------------------------------------------------- 格式化
-
-def format_payload(raw: bytes) -> str:
-    """把 topic 收到的 bytes 變成一行人看的字。
-
-    資料 topic 是量測 JSON、activity 是事件 JSON、status 是純文字,
-    所以這裡不假設格式,解不出來就原樣印。
-    """
-    text = raw.decode("utf-8", "replace")
-    try:
-        message = json.loads(text)
-    except (json.JSONDecodeError, ValueError):
-        return text
-    if not isinstance(message, dict):
-        return text
-
-    stamp = message.get("t", "")
-    if "v" in message:  # 量測值
-        name = message.get("name", "")
-        unit = message.get("unit", "")
-        label = f"  ({name})" if name else ""
-        return f"{stamp}  {message['v']} {unit}{label}".rstrip()
-    if "kind" in message:  # activity
-        return f"{stamp}  {message['kind']} {message.get('text', '')}"
-    return text
-
-
-def columns(rows: list[list[str]], headers: list[str]) -> str:
-    """對齊的表格,不拉外部套件。"""
-    if not rows:
-        return ""
-    widths = [len(h) for h in headers]
-    for row in rows:
-        for i, cell in enumerate(row):
-            widths[i] = max(widths[i], len(cell))
-    lines = ["  ".join(h.ljust(widths[i]) for i, h in enumerate(headers)).rstrip()]
-    lines.append("  ".join("-" * widths[i] for i in range(len(headers))))
-    for row in rows:
-        lines.append("  ".join(cell.ljust(widths[i]) for i, cell in enumerate(row)).rstrip())
-    return "\n".join(lines)
 
 
 # ------------------------------------------------------------------ 頻率

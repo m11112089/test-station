@@ -7,8 +7,7 @@
 |---|---|
 | 語言 / 環境 | Python,以 **uv** 管理 |
 | Middleware | **eCAL 6**(`eclipse-ecal`),跨 PC 時所有機台必須同為 v6 |
-| UI | PySide6 |
-| CLI | `st`(ROS 風格) |
+| UI | PySide6 —— **站台唯一的人機介面** |
 | 報告 | Plotly HTML(僅測試結束後產生,UI 內不畫即時曲線) |
 | 儀器 / DUT I/O | pyserial、paramiko(SSH) |
 
@@ -17,17 +16,18 @@
 ## 1. 架構原則
 
 1. **契約在 topic 與 service,不在程式碼。** 每個 node 一份 `INTERFACE.md`。
-2. **GUI 沒有特權。** UI 按鈕送出的命令字串,與 `st`、測試計畫送的完全一樣。
+2. **GUI 沒有特權。** UI 按鈕送出的命令字串,與測試計畫送的完全一樣,
+   走的是同一個 client 層(`teststation.client`),那一層不依賴 Qt。
 3. **只有 Log node 寫檔。** 全站單一 CSV schema;時間戳由 node 在量測當下蓋(多台 PC 以 NTP 對時)。
 4. **Topic 描述物理位置,不描述意義。** `<device>/<port>/<channel>`,意義由 payload 的 `name` 欄位承載。
 
 所有 node 都連接實機,不提供模擬模式。
 
 ```
-            ┌──────────┐   ┌──────────┐   ┌──────────────┐
-            │  st CLI  │   │ PySide6  │   │ Main-Control │   ← 命令來源(平權)
-            └────┬─────┘   └────┬─────┘   └──────┬───────┘
-                 └──── eCAL Service(純文字命令 → OK/ERR)──┘
+                     ┌──────────┐   ┌──────────────┐
+                     │ PySide6  │   │ Main-Control │   ← 命令來源(平權)
+                     └────┬─────┘   └──────┬───────┘
+                          └─ eCAL Service(純文字命令 → OK/ERR)─┘
                                  │
    ┌──────────┬──────────┬───────┴──┬──────────┬──────────┐
    │ PFR-100L │BTM-4208SD│  Serial  │   SSH    │   Log    │   ← node(各自獨立 process)
@@ -45,6 +45,7 @@
 
 - 每個 node 提供一個 service,名稱為 `<device>/<port>`,例如 `PFR-100L/COM20`;Log 與 Main-Control 為固定名稱 `Log`、`Main-Control`。
 - 命令是**一行純文字**:`<method> [args...]`,例如 `set_voltage 12`。
+  最後一個參數可以吃掉整行剩下的文字(例如 `mark DUT power on` 是一個參數)。
 - 回覆以 `OK` 或 `ERR` 開頭,後接說明,例如 `OK 12.000`、`ERR power limit 100W exceeded`。
 
 **所有 node 共通的 method**(由 `core` 基底類別提供):
@@ -90,7 +91,7 @@ Payload 為 JSON 字串,時間戳由 node 在量測當下蓋上,格式為人眼�
 ```
 
 無參數 → 按鈕;有參數 → 輸入框 + 按鈕(依 `min`/`max` 限制)。按下後送出 `set_voltage 12`。
-同一份清單也是 `st` 的 Tab 補完來源,以及 `INTERFACE.md` 命令表的來源。
+同一份清單也是 `INTERFACE.md` 命令表的來源。
 
 ---
 
@@ -101,10 +102,12 @@ uv run pfr_100l --port COM20     # 指定 port
 uv run pfr_100l                  # 自動掃描
 ```
 
+實務上不會手動一個一個起,而是在 UI 的「啟動整站」分頁選一份 launch 檔(見 3.1)。
+
 - 未指定 `--port` 時,node **自己掃描**所有 COM,以該裝置專屬的方式辨識,**使用中的 port 直接跳過**。
   兩台同型裝置因此會自然分配到不同 COM。
 - **node 必須依序啟動,不可同時啟動**:掃描期間會暫時佔用別人的 port,導致對方誤判為「使用中」而跳過。
-  實務上以 `st launch` 啟動整站(見 3.1)。
+  實務上由 UI 的「啟動整站」依序啟動(見 3.1)。
 - 探測字串必須盡量無害(會打進其他裝置或 DUT 的 console)。
 - Topic 的 port 永遠用 COM 名稱,不用序號(同型 DUT 可能接在同一台電腦)。
 
@@ -115,7 +118,7 @@ uv run pfr_100l                  # 自動掃描
 | Serial DUT | 由 DUT profile 的 `identify()` 決定 |
 | SSH DUT | 不掃描,必須以 `--host` 指定 |
 
-### 3.1 `st launch` — 依序啟動整站
+### 3.1 依序啟動整站
 
 類似 ros launch。站台配置寫在 `launch/*.yaml`:
 
@@ -134,15 +137,13 @@ nodes:
 ready_timeout: 30               # 每個 node 最多等 30 s 變 ok
 ```
 
-```
-st launch launch/burn_in_station.yaml
-```
+在 UI 的「啟動整站」分頁選這個檔案就會跑起來。
 
 - 依列出的順序啟動,**等前一個 node 的 `status` 變成 `ok`(掃描完成、port 已佔住)才啟動下一個**。
 - 某 node 超過 `ready_timeout` 仍未 `ok`:紅字警示,**繼續啟動下一個**,不整批中止。
-- launcher 留在前景,各 node 輸出加前綴(如 `[pfr_100l/COM20]`)合併顯示。
-- Ctrl+C 以**反向順序**關閉所有 node,Log 最後關,確保收到其他 node 的最後資料。
-- UI 也可選擇 launch 檔一鍵啟動。
+- 各 node 的輸出加前綴合併顯示,前綴在 node 註冊完成後換成它真正的 service 名稱。
+- **node 是 UI 的子行程:關掉 UI 就是結束測試。** 以反向順序關閉,Log 最後關;
+  Log 會先收到一個 `stop`(關檔並產生報告)才被關掉,所以錄到一半關站也有報告。
 - 不使用 eCAL Sys:它只能「等固定秒數」,不理解 `status` 語意,且需安裝完整版 eCAL。
 
 ---
@@ -186,7 +187,7 @@ uv run ssh_dut    --dut axelera_board --host 192.168.1.50
 | method | 說明 |
 |---|---|
 | `start <run_name>` | 建立 `logs/YYYY-MM-DD_HHMMSS_<run_name>/`,開始訂閱所有資料 topic |
-| `mark <text>` | 在時間軸打事件標記(報告上畫成區段或垂直線) |
+| `mark <text>` | 在時間軸打事件標記(報告上畫成垂直線) |
 | `stop` | 關檔,並自動產生 `report.html` |
 
 run 資料夾內容:
@@ -195,7 +196,7 @@ run 資料夾內容:
 |---|---|
 | `data.csv` | long format:`t, topic, name, value, unit`;**每筆立即 flush** |
 | `console.log` | 所有 DUT `raw` topic 的原始輸出 |
-| `report.html` | 由 `sync.py`(pandas 對齊到同一時間軸)+ `chart_template.html` 產生 |
+| `report.html` | 由 `sync.py`(按 topic 分組,**不對齊、不重取樣**)+ `chart_template.html` 產生 |
 
 報告產出後由使用者在 HTML 上自行調整(顯示群組、區間統計等)。
 
@@ -216,7 +217,7 @@ sleep(3600)
 stop()
 ```
 
-- `cmd()` 送出的字串與 `st` 手打的完全相同。
+- `cmd()` 送出的字串與 UI 按鈕送的完全相同,走同一個 `teststation.client`。
 - Main-Control 本身的 service:`run <plan>`、`abort`,並 publish 執行進度。
 - **abort 或腳本例外時**,runner 在 `finally` 裡關閉所有 PFR 輸出,並對 Log 下 `mark` 與 `stop`。
 
@@ -224,39 +225,36 @@ stop()
 
 ## 5. 操作介面
 
-### 5.1 `st` CLI(ROS 風格)
+### 5.1 唯一的人機介面
 
-```
-st node list
-st service list
-st service call     PFR-100L/COM20 "set_voltage 12"
-st service describe PFR-100L/COM20
-st topic list
-st topic echo BTM-4208SD/COM7/ch3
-st topic pub  test/fake/ch1 '{"v": 1.0}'
-st topic hz   BTM-4208SD/COM7/ch3
-st                                   # 互動模式(REPL),Tab 補完來自 describe
-```
+站台的操作全部在 UI 裡。沒有命令列工具 —— 曾經有過一個 `st`,砍掉了:
+它跟 UI 是同一件事的兩份實作,而站上實際的操作都在 UI 進行。
 
 ### 5.2 命令來源平權
 
-`st`、UI、測試計畫送出的命令字串**完全相同**,走同一個 eCAL service。
-重疊的功能只有一份實作:純邏輯放在 `cli/common.py`,`st` 與 UI 各自包一層薄的殼。
+UI 與測試計畫送出的命令字串**完全相同**,走同一個 eCAL service。
 
-新功能一律**兩邊都做** —— `st` 給腳本與遠端,UI 給現場。
+共用的部分在 `teststation/client.py`:session、探索、service 呼叫、頻率統計、
+payload 處理。**那一層不依賴 Qt** —— 測試計畫的 runner 是無頭腳本,
+把它綁進 `ui/` 會逼 runner 去 import PySide6,或是再抄一份一模一樣的程式碼。
 
 ### 5.3 PySide6 UI
+
+```
+uv run ui
+```
 
 通用 UI,不為個別裝置撰寫畫面:
 
 1. **Node 清單**:從 eCAL 註冊資訊自動列出,燈號依 `status` topic。
 2. **命令面板**:依 `describe` 自動產生按鈕與輸入框,另附自由輸入的命令列與歷史。
 3. **即時數值表**:所有資料 topic 的最新值、`name`、單位、更新時間。
-4. **測試計畫**:選擇計畫、Run / Abort、進度與輸出。
-5. **Log 控制**:Start / Mark / Stop、開啟最近一份報告。
-6. **DUT console 分頁**:上半 `raw` 原始收發、下半 `activity`。
-7. **topic 工具**:量發佈頻率、發佈假資料(與 `st topic hz` / `pub` 同一份實作)。
-8. **報告分頁**:把 `report.html` 開在視窗裡。
+4. **DUT console**:上半 `raw` 原始收發、下半 `activity`。
+5. **測試計畫**:選擇計畫、Run / Abort、進度與輸出。
+6. **Log 控制**:Start / Mark / Stop、run 清單、錄製狀態。
+7. **報告**:把 `report.html` 開在視窗裡。
+8. **topic 工具**:量發佈頻率、發佈假資料。
+9. **啟動整站**:選 launch 檔依序啟動(見 3.1)。
 
 ---
 
@@ -280,22 +278,21 @@ test-station/
 ├─ README.md
 ├─ TODO.md
 ├─ src/teststation/
+│  ├─ client.py        # 站台 client:session、探索、service 呼叫、頻率、payload。**不依賴 Qt**
 │  ├─ core/            # node 基底與共通契約:service、describe、status、activity、COM 掃描、payload、topic 分類
 │  ├─ nodes/
 │  │  ├─ pfr_100l/     # node.py、scpi.py、INTERFACE.md
 │  │  ├─ btm_4208sd/   # node.py、protocol.py、INTERFACE.md
 │  │  ├─ serial_dut/
 │  │  ├─ ssh_dut/
-│  │  └─ log/          # recorder、sync.py、report.py、chart_template.html
+│  │  └─ log/          # node.py、sync.py、report.py、chart_template.html、plotly.min.js
 │  ├─ duts/            # DUT profile
 │  ├─ control/         # Main-Control runner 與計畫用 client API
-│  ├─ cli/             # st
-│  └─ ui/              # PySide6
-├─ launch/             # st launch 站台配置(*.yaml)
+│  └─ ui/              # PySide6:app、bridge、panels、launch
+├─ launch/             # 站台配置(*.yaml)
 ├─ plans/              # 測試計畫腳本
-├─ tests/              # 封包解析與 node 契約測試
+├─ tests/
 ├─ docs/
-│  ├─ st.md            # st 命令列的操作文件
 │  ├─ ui.md            # PySide6 UI 的操作文件
 │  ├─ log.md           # Log node 與報告的操作文件
 │  ├─ devices/         # 各裝置的原廠手冊 + 操作文件 README.md(PFR-100L、BTM-4208SD)

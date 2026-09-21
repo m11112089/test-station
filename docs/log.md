@@ -14,15 +14,10 @@
 
 ## 錄一次
 
-```
-uv run log                                    # 另一個終端機
-st service call Log "start burn_in_45C"
-st service call Log "mark DUT power on"
-st service call Log "stop"
-```
+在 UI 的 **Log 分頁**按 Start / Mark / Stop。
 
-或在 UI 的 **Log 分頁**按 Start / Mark / Stop。兩邊送的是同一個字串,
-所以 `st` 下的 `start`,UI 上一樣會亮起來 —— 狀態是 Log node 推的,不是各自猜的。
+狀態是 **Log node 推過來的**(`Log/state`),不是畫面自己猜的 —— 所以測試計畫
+用 `teststation.control` 下的 `start()`,這個畫面一樣會亮起來、筆數一樣會跳。
 
 錄製中 UI 顯示:
 

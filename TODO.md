@@ -12,22 +12,22 @@
 
 驗過的項目直接把這行刪掉,不用改成「已驗證」——狀態記在這裡,不要散進文件。
 
-## `st` — 待補
+## UI / launcher — 待補
 
 - [ ] UI 的 DUT console 分頁:`raw` 窗格與 `send` 送出路徑沒辦法驗,要等 Serial / SSH
       DUT node。目前只驗過 `activity` 窗格與錯誤顯示(對著 BTM node,它沒有 `send`)。
-- [ ] `st launch` 被 `taskkill /F` 或工作管理員硬砍時會留下孤兒 node 佔住 COM。
-      正常 Ctrl+C / SIGTERM / SIGBREAK 都已處理。若要根治,Windows 上得用 Job Object。
-- [ ] `launch/burn_in_station.yaml`(README 3.1 的完整範例)還建不起來 ——
-      缺 `pfr_100l`、`serial_dut`、`ssh_dut`。目前只有 `launch/btm_only.yaml`。
+- [ ] UI 被 `taskkill /F` 或工作管理員硬砍時會留下孤兒 node 佔住 COM。
+      正常關閉已處理(反向順序,Log 先收到 `stop`)。若要根治,Windows 上得用 Job Object。
+- [ ] `launch/burn_in_station.yaml` 目前只開了 `log` 與 `btm_4208sd` 兩行,
+      其餘註解著等對應的 node 做好。
 
-## UI — 待補
+## UI 面板 — 待補
 
 - [ ] 「測試計畫」與「Log」分頁按下去只會收到 `ERR`,要等 `Main-Control` 與 `Log` node。
       面板與命令字串已驗過,缺的是對面。
 - [ ] `Main-Control` 的進度 topic 名稱還沒定案,UI 目前只顯示 service 的回覆。
 - [ ] 實際字體與版面只在離屏渲染下看過(offscreen 平台沒有字型,字會變方框),
-      要在桌面上跑 `uv run st ui` 確認一次。
+      要在桌面上跑 `uv run ui` 確認一次。
 
 ## Log — 待補
 

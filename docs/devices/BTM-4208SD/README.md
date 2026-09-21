@@ -54,27 +54,22 @@ console 也不會有任何影響。開不起來的 port(被別的 process 佔住
 | `--data-timeout` | 10.0 s | 多久沒收到合格封包視為斷線 |
 | `--sniff` | off | 只印原始封包,不啟動 eCAL node |
 
-整站請用 `st launch`,**不要手動同時啟動多個 node**——掃描期間會暫時佔住別人的 port,
+整站請用 UI 的「啟動整站」分頁,**不要手動同時啟動多個 node**——掃描期間會暫時佔住別人的 port,
 會害對方誤判成「使用中」而跳過。
 
 ---
 
 ## 3. 驗證有沒有活著
 
-```
-st topic list                                   # 只會看到有插探棒的 channel
-st topic echo BTM-4208SD/COM11/ch1
-st topic hz   BTM-4208SD/COM11/ch1
-st service call BTM-4208SD/COM11 "describe"
-```
+開 UI(`uv run ui`),左邊的 **Node 清單**會出現 `BTM-4208SD/COM11`,燈號是綠的。
+下面的**即時數值表**只會列出有插探棒的 channel:
 
-`st topic echo` 應該看到:
-
-```json
-{"t": "2026-09-20 00:41:30.524", "v": 31.0, "unit": "°C", "name": "ch1"}
+```
+TOPIC                  NAME  VALUE  UNIT  UPDATED
+BTM-4208SD/COM11/ch1   ch1   31.0   °C    2026-09-20 00:41:30.524
 ```
 
-**沒插探棒的 channel 完全不 publish**,連 topic 都不會出現在 `st topic list`。
+**沒插探棒的 channel 完全不 publish**,連 topic 都不會出現。
 插上探棒後會自己出現,不用重啟 node。
 
 發佈節奏依儀器輸出,沒有 `--interval`。實測一輪 12 個 channel 約 2 秒。
@@ -83,9 +78,8 @@ st service call BTM-4208SD/COM11 "describe"
 
 ## 4. 命名 channel
 
-```
-st service call BTM-4208SD/COM11 "set_channel ch3 SoC_heatsink"
-```
+在 UI 的**命令**分頁,`set_channel` 那一列填 `ch3` 與 `SoC_heatsink` 再按按鈕
+(按鈕是照這個 node 的 `describe` 自動長出來的)。
 
 之後 payload 的 `name` 就變成 `SoC_heatsink`,報告上看到的也是這個名字。
 測試計畫裡同樣一句:
@@ -121,9 +115,9 @@ over range 編碼不一樣。把 `--sniff` 看到的填充字元回報給改 `pr
 | 症狀 | 原因 / 處理 |
 |---|---|
 | 掃描找不到,`--port` 也收不到資料 | 機器沒開、或 3.5 mm 線沒插到底。先 `--sniff` 確認有沒有 byte 進來 |
-| `st topic list` 少了某些 channel | 正常:沒插探棒的 channel 不 publish。插上探棒後會自己出現 |
+| 即時數值表少了某些 channel | 正常:沒插探棒的 channel 不 publish。插上探棒後會自己出現 |
 | status 一直 `reconnecting` | port 被別的 process 佔住,或 USB 轉接線鬆脫。每 2 秒重試一次 |
-| status 變 `error: ...` | 重連超過 30 秒,已停止自動重試。排除後下 `st service call BTM-4208SD/COM11 "reconnect"` |
+| status 變 `error: ...` | 重連超過 30 秒,已停止自動重試。排除後在 UI 的命令分頁按「重新連線」 |
 | `error: no valid frame for 10s` | 機器開著但沒在送(Auto Power Off 關機了?),或訊號線鬆脫。這台只進不出,拔訊號線時 port 還在、read 不會失敗,只能靠「多久沒資料」判斷 |
 | 單位拿到 `°F` | 面板 `t-CF` 設定,node 不做換算 |
 | 掃描掃到別台裝置的 port | 正常會跳過;若某台裝置剛好送出結構相符的封包,改用 `--port` 指定 |

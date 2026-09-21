@@ -14,9 +14,7 @@ Service 名稱:`BTM-4208SD/<port>`,例如 `BTM-4208SD/COM11`。
 | `set_channel` | `<channel> <name>` | 設定 channel 顯示名稱,寫入 payload 的 `name` | `OK ch3 = SoC_heatsink` |
 | `reconnect` | — | 手動重開連線(重連逾時後使用) | `OK reconnecting` |
 
-```
-st service call BTM-4208SD/COM11 "set_channel ch3 SoC_heatsink"
-```
+UI 的**命令**分頁會照這張表自動長出按鈕與輸入框。
 
 ## Topic
 

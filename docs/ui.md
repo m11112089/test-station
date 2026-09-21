@@ -6,10 +6,13 @@
 按鈕是照各 node 回報的 `describe` 長出來的,數值表是照資料 topic 長出來的。
 **新增一種裝置不用改 UI。**
 
-跟 [`st`](st.md) 一樣,UI 送出的命令字串與 `st`、測試計畫送的完全相同,走同一個
-eCAL service(README 1.2:GUI 沒有特權)。
+UI 送出的命令字串與測試計畫送的完全相同,走同一個 eCAL service
+(README 1.2:GUI 沒有特權)。共用的部分在
+[teststation/client.py](../src/teststation/client.py),**那一層不依賴 Qt** ——
+測試計畫的 runner 是無頭腳本,也要用它。
 
-程式碼在 [src/teststation/ui/](../src/teststation/ui/)。
+程式碼在 [src/teststation/ui/](../src/teststation/ui/)。**這是站台唯一的人機介面**,
+沒有命令列工具。
 
 > **第一部分:怎麼用**(到「已知限制」為止)
 > **[第二部分:程式碼規劃](#第二部分程式碼規劃)**
@@ -19,7 +22,7 @@ eCAL service(README 1.2:GUI 沒有特權)。
 ## 啟動
 
 ```
-uv run st ui
+uv run ui
 ```
 
 UI 自己開 eCAL session,不需要先啟動別的東西。站台還沒起來時,用「啟動整站」分頁。
@@ -65,26 +68,26 @@ UI 自己開 eCAL session,不需要先啟動別的東西。站台還沒起來時
 - 其他參數 → 文字框
 - `"style": "danger"` → 紅色按鈕
 
-下面的自由輸入列送什麼就是什麼,跟 `st service call` 一模一樣。歷史區的回覆綠色是 `OK`、紅色是 `ERR`。
+下面的自由輸入列送什麼就是什麼,跟測試計畫的 `cmd()` 一模一樣。歷史區的回覆綠色是 `OK`、紅色是 `ERR`。
 
 **即時數值(下)** —— 所有資料 topic 的最新值。一個 topic 一列,不會愈長愈多。
 `status`、`activity`、`raw` 這三個共通 topic 不會進來。
 `NAME` 欄會跟著 `set_channel` 立刻改變。
 
 **DUT console** —— 雙窗格,上半 DUT 的 `raw` 原始收發、下半 node 的 `activity`。
-調整 DUT profile 的 `parse()` 時用來對照。**這是站上唯一的 DUT console** ——
-原本的 `st console` TUI 已移除,兩份實作只留這一份。
+調整 DUT profile 的 `parse()` 時用來對照:上面有這行、下面沒有對應的 `PUB`,
+就是 `parse()` 沒接到。
 
-**topic 工具** —— 量某個 topic 的發佈頻率、發佈假資料。跟 `st topic hz` / `pub`
-**是同一份實作**:統計在 `cli.common.rate_of()`、payload 處理在
-`cli.common.prepare_payload()`,這個面板只負責選 topic 與顯示。
+**topic 工具** —— 量某個 topic 的發佈頻率、發佈假資料。統計在
+`client.rate_of()`、payload 處理在 `client.prepare_payload()`,
+這個面板只負責選 topic 與顯示。
 
 **測試計畫** —— 列出 `plans/*.py`,Run / Abort 送給 `Main-Control`。
 
 **Log** —— Start / Mark / Stop 送給 `Log`,下面列出過去的 run(最新在上,標示筆數與有沒有報告)。
 
-錄製狀態是 **Log node 推過來的**(`Log/state`),不是這裡猜的 —— 所以在 `st` 那邊下
-`start`,這個畫面一樣會亮起來、筆數一樣會跳。錄製中 Start 會變灰、Mark 與 Stop 才能按。
+錄製狀態是 **Log node 推過來的**(`Log/state`),不是這裡猜的 —— 所以測試計畫
+用 `control` 下的 `start()`,這個畫面一樣會亮起來、筆數一樣會跳。錄製中 Start 會變灰、Mark 與 Stop 才能按。
 
 **報告** —— 把 `report.html` 開在 UI 裡(QtWebEngine)。報告是自足的檔案,所以
 這裡看到的跟拿瀏覽器開的是同一份東西,沒有第二套繪圖邏輯。在 Log 分頁選一次 run
@@ -92,9 +95,11 @@ UI 自己開 eCAL session,不需要先啟動別的東西。站台還沒起來時
 
 細節見 [log.md](log.md)。
 
-**啟動整站** —— 選一個 `launch/*.yaml` 一鍵啟動,輸出直接顯示在分頁裡。
-它是去跑 `st launch`,不是另外寫一份啟動邏輯 —— 依序啟動、等 `status` 變 `ok`、
-反向關閉這些語意只能有一個實作。關掉 UI 會一併收掉 launcher。
+**啟動整站** —— 選一個 `launch/*.yaml` 依序啟動,輸出直接顯示在分頁裡。
+等的是每個 node 的 `status` 變成 `ok`,**不是等固定秒數**(README 3.1)。
+
+**node 是 UI 的子行程:關掉 UI 就是結束測試。** 關閉時以反向順序進行,Log 最後關,
+而且會先送 Log 一個 `stop` —— 所以錄到一半關站,檔案一樣會正常關好。
 
 ## 已知限制
 
@@ -114,7 +119,8 @@ UI 自己開 eCAL session,不需要先啟動別的東西。站台還沒起來時
 |---|---|---|
 | `bridge.py` | eCAL ↔ Qt:探索、訂閱、非同步 service 呼叫 | 任何 widget |
 | `panels.py` | 各個面板 | 任何 eCAL 呼叫、任何裝置專屬邏輯 |
-| `app.py` | 主視窗、分頁配置、launch 一鍵啟動 | 面板內部的細節 |
+| `app.py` | 主視窗、分頁配置 | 面板內部的細節 |
+| `launch.py` | 依序啟動、就緒判定、順序關閉 | 對裝置的假設 |
 
 **`panels.py` 完全不 import eCAL。** 面板只跟 `Station` 的 signal 與方法打交道,
 所以測試可以直接餵 signal,不用起 eCAL —— 見 `tests/test_ui.py`。
@@ -156,9 +162,9 @@ DUT console 的訂閱是**例外**:只訂目前看著的那一個(`watch_console
 2. **數值表來自 topic 名稱**,`is_data_topic()` 靠最後一段是不是共通 topic 來分類
 3. **命令是字串**,UI 不解析語意,只負責把字串送出去、把回覆顯示出來
 
-跟 `st` 重疊的功能一律**共用 `cli.common` 的純函式**,兩邊各自包一層薄殼:
-頻率統計是 `common.rate_of()`、payload 處理是 `common.prepare_payload()`、
-topic 分類是 `core.topics`。新功能兩邊都做,但實作只有一份。
+跟測試計畫重疊的部分一律走 `teststation.client`:service 呼叫是 `client.call()`、
+頻率統計是 `client.rate_of()`、payload 處理是 `client.prepare_payload()`、
+topic 分類是 `core.topics`。**那一層不依賴 Qt**,所以無頭的 runner 也能用。
 
 `Log` 面板是這條規則裡唯一「認得某個 node」的地方 —— 但 `Log` 是 README 2.1 訂死的
 固定名稱,跟裝置不同。它也只用共通的管道:service 呼叫 + 一個 `Log/state` topic。
@@ -169,8 +175,23 @@ topic 分類是 `core.topics`。新功能兩邊都做,但實作只有一份。
 
 1. `panels.py` 寫一個 widget,建構子收 `Station`,自己接需要的 signal
 2. 需要新資料的話,在 `bridge.Station` 加 signal 與訂閱,**不要在面板裡碰 eCAL**
-3. `app.py` 的 `MainWindow` 裡加進分頁
-4. `tests/test_ui.py` 加測試:直接 `station.some_signal.emit(...)`,檢查畫面
+3. 純邏輯(統計、解析、格式)放 `teststation/client.py`,不要放在面板裡 ——
+   測試計畫之後可能也要用
+4. `app.py` 的 `MainWindow` 裡加進分頁
+5. `tests/test_ui.py` 加測試:直接 `station.some_signal.emit(...)`,檢查畫面
+
+## 踩過的坑
+
+| 坑 | 症狀 | 處理 |
+|---|---|---|
+| `initialize()` 預設的 `DEFAULT`(55)不含 `MONITORING`(8) | `get_monitoring()` 丟 `RuntimeError` | `client.session()` 用 `init.ALL` |
+| eCAL service callback 的回傳型別 | 回 `bytes` 或 `str` 被吞成 `bad cast`,client 端卻收到 `EXECUTED` | 必須回 `(ret_state, bytes)` |
+| Windows 的 `QProcess.terminate()` 對 console 程式沒作用 | 每個 node 都等滿逾時才被砍 | 直接 `kill()`;Log 先收 `stop` 正常關檔 |
+| 新建的 publisher 還沒配對 | `topic pub` 第一筆掉光 | 等 `get_subscriber_count() > 0` |
+| 新建的 subscriber 配對要約 2 秒 | 頻率面板開頭幾秒沒東西 | 正常,不是壞了 |
+| 視窗關掉後 worker 才回來 | `Signal source has been deleted` | emit 包 try/except RuntimeError |
+
+前兩個的細節寫在 `core/node.py` 與 `client.py` 的 docstring,因為那不只影響 UI。
 
 ## 測試策略
 
@@ -181,4 +202,4 @@ GUI 測試可以在沒有螢幕的機器(CI)上跑。
 不需要 eCAL、不需要 node。`station.call` 用 monkeypatch 換掉就能斷言送出了什麼字串。
 
 > **離屏渲染的截圖字會變成方框**,因為 offscreen 平台一個字型都沒有(連 `A` 都畫不出來)。
-> 那不是字型問題,實際外觀要在桌面上跑 `st ui` 才看得到。
+> 那不是字型問題,實際外觀要在桌面上跑 `uv run ui` 才看得到。

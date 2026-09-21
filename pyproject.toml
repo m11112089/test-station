@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.scripts]
-st = "teststation.cli.main:main"
+ui = "teststation.ui.app:run_ui"
 btm_4208sd = "teststation.nodes.btm_4208sd.node:main"
 log = "teststation.nodes.log.node:main"
 

@@ -1,6 +1,8 @@
 """PySide6 主視窗(README 5.3)。
 
-把六個面板組起來,並提供 launch 檔一鍵啟動(README 3.1)。
+站台**唯一的人機介面**:命令、數值、DUT console、測試計畫、Log、報告、
+topic 工具,以及依序啟動整站。
+
 視窗本身不認識任何裝置 —— 選到哪個 node,面板就去問那個 node 要 `describe`。
 """
 
@@ -9,14 +11,15 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QProcess, Qt
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QPlainTextEdit,
     QPushButton, QSplitter, QTabWidget, QVBoxLayout, QWidget,
 )
 
-from ..cli.common import session
+from ..client import session
 from .bridge import Station
+from .launch import Launcher
 from .panels import (
     MONO, CommandPanel, ConsolePanel, LogPanel, NodeList, PlanPanel, ReportPanel,
     TopicToolsPanel, ValueTable,
@@ -35,18 +38,21 @@ def project_root() -> Path:
 
 
 class LaunchBar(QWidget):
-    """選一個 launch 檔一鍵啟動整站,輸出直接顯示在下面。"""
+    """選一個 launch 檔一鍵啟動整站,輸出直接顯示在下面。
 
-    def __init__(self, root: Path) -> None:
+    node 是這個行程的子行程 —— **關掉 UI 就是結束測試**。
+    """
+
+    def __init__(self, station: Station, root: Path) -> None:
         super().__init__()
         self._root = root
-        self._process: QProcess | None = None
+        self._launcher = Launcher(station, root, self)
 
         self._choose = QPushButton("選擇 launch 檔並啟動")
         self._choose.clicked.connect(self._pick)
         self._stop = QPushButton("關閉整站")
         self._stop.setEnabled(False)
-        self._stop.clicked.connect(self._terminate)
+        self._stop.clicked.connect(self._launcher.shutdown)
         self._state = QLabel("尚未啟動")
 
         self._output = QPlainTextEdit(readOnly=True)
@@ -63,56 +69,31 @@ class LaunchBar(QWidget):
         layout.addLayout(bar)
         layout.addWidget(self._output, 1)
 
+        self._launcher.output.connect(self._output.appendPlainText)
+        self._launcher.state.connect(self._show_state)
+
     def _pick(self) -> None:
         path, _filter = QFileDialog.getOpenFileName(
             self, "選擇 launch 檔", str(self._root / "launch"), "YAML (*.yaml *.yml)"
         )
-        if path:
-            self._start(Path(path))
-
-    def _start(self, config: Path) -> None:
-        if self._process is not None:
-            self._state.setText("已經有一個 launch 在跑了")
+        if not path:
             return
-        # 走 `st launch` 而不是自己再寫一份啟動邏輯:依序啟動、等 status ok、
-        # 反向關閉這些語意只能有一個實作(README 3.1)。
-        self._process = QProcess(self)
-        self._process.setProgram(sys.executable)
-        self._process.setArguments(
-            ["-u", "-m", "teststation.cli.main", "launch", str(config)]
-        )
-        self._process.setWorkingDirectory(str(self._root))
-        self._process.setProcessChannelMode(QProcess.MergedChannels)
-        self._process.readyReadStandardOutput.connect(self._drain)
-        self._process.finished.connect(self._finished)
-        self._process.start()
-        self._state.setText(f"啟動中:{config.name}")
+        if self._launcher.running:
+            self._state.setText("已經有 node 在跑了,先關閉整站")
+            return
         self._choose.setEnabled(False)
         self._stop.setEnabled(True)
+        self._launcher.start(Path(path))
 
-    def _drain(self) -> None:
-        if self._process is None:
-            return
-        text = bytes(self._process.readAllStandardOutput()).decode("utf-8", "replace")
-        self._output.appendPlainText(text.rstrip())
-
-    def _finished(self, code: int, _status) -> None:
-        self._state.setText(f"launch 已結束(離開碼 {code})")
-        self._choose.setEnabled(True)
-        self._stop.setEnabled(False)
-        self._process = None
-
-    def _terminate(self) -> None:
-        if self._process is not None:
-            self._state.setText("關閉中…")
-            self._process.terminate()
+    def _show_state(self, text: str, started: int, failed: int) -> None:
+        note = f"{started} 個 node" + (f",{failed} 個未就緒" if failed else "")
+        self._state.setText(f"{text} · {note}" if started or failed else text)
+        self._choose.setEnabled(not self._launcher.running)
+        self._stop.setEnabled(self._launcher.running)
 
     def shutdown(self) -> None:
-        """UI 關掉時一併收掉 launcher,不要留下佔著 COM 的孤兒 node。"""
-        if self._process is not None:
-            self._process.terminate()
-            if not self._process.waitForFinished(10000):
-                self._process.kill()
+        """UI 關掉時一併收掉所有 node(README 3.1 的反向順序)。"""
+        self._launcher.shutdown()
 
 
 class MainWindow(QMainWindow):
@@ -130,7 +111,7 @@ class MainWindow(QMainWindow):
         self._report = ReportPanel()
         self._tools = TopicToolsPanel(self.station)
         self._values = ValueTable(self.station)
-        self._launch = LaunchBar(root)
+        self._launch = LaunchBar(self.station, root)
 
         tabs = QTabWidget()
         tabs.addTab(self._commands, "命令")
@@ -180,7 +161,7 @@ class MainWindow(QMainWindow):
 def run_ui(argv: list[str] | None = None) -> int:
     app = QApplication(argv or sys.argv[:1])
     root = project_root()
-    with session("st-ui"):
+    with session("teststation-ui"):
         window = MainWindow(root)
         window.show()
         return app.exec()

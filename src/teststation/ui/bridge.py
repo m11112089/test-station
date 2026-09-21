@@ -5,8 +5,8 @@ UI 不直接碰 eCAL,一律透過這裡,理由有兩個:
 1. **執行緒。** eCAL 的 callback 在它自己的執行緒上跑,直接動 widget 會讓 Qt 當掉。
    這裡把每個事件轉成 Qt signal;signal 送到住在主執行緒的接收者時會自動排隊,
    widget 因此永遠只在主執行緒被碰到。
-2. **`st` 與 UI 走同一條路。** service 呼叫直接用 `cli.common.call()`,
-   跟 `st service call` 是同一份程式碼,不是另外寫一套(README 1.2:GUI 沒有特權)。
+2. **client 層是共用的。** service 呼叫、探索、頻率統計都用 `teststation.client`,
+   測試計畫的 `control` 之後也用同一份 —— 它不依賴 Qt(README 1.2:GUI 沒有特權)。
 
 探索用輪詢(eCAL 原生的 monitoring API),訂閱則是常駐的 —— node 出現就掛上,
 消失就拆掉,所以燈號與數值是推過來的,不是輪詢來的。
@@ -22,14 +22,11 @@ from collections import deque
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, Signal
 
-from ..cli import common
-from ..core.topics import is_measurement, is_measurement_topic
+from .. import client as common
+from ..core.topics import LOG_SERVICE, is_measurement, is_measurement_topic
 
 DISCOVERY_INTERVAL_MS = 2000
 """多久重新問一次站上有哪些 node 與 topic。"""
-
-LOG_SERVICE = "Log"
-"""Log node 的固定 service 名稱(README 2.1)。"""
 
 class _Call(QRunnable):
     """service 呼叫會阻塞,丟到執行緒池,不要卡住畫面。"""
@@ -45,7 +42,10 @@ class _Call(QRunnable):
             reply = common.call(self._service, self._line)
         except Exception as exc:
             reply = f"ERR {exc}"
-        self._station.reply.emit(self._service, self._line, reply)
+        try:
+            self._station.reply.emit(self._service, self._line, reply)
+        except RuntimeError:
+            pass   # 視窗已經關了,沒人要聽了
 
 
 class _Publish(QRunnable):
@@ -64,7 +64,7 @@ class _Publish(QRunnable):
         try:
             message = common.prepare_payload(self._payload)
         except ValueError as exc:
-            self._station.published.emit(self._topic, 0, f"ERR {exc}")
+            self._emit(0, f"ERR {exc}")
             return
         publisher = ecal.Publisher(self._topic, common.JSON)
         note = "" if common.wait_for_subscriber(publisher) else "(沒有人訂閱)"
@@ -78,7 +78,13 @@ class _Publish(QRunnable):
             if interval and sent < total:
                 time.sleep(interval)
         time.sleep(0.3)   # 讓最後一筆真的出去
-        self._station.published.emit(self._topic, sent, note)
+        self._emit(sent, note)
+
+    def _emit(self, sent: int, note: str) -> None:
+        try:
+            self._station.published.emit(self._topic, sent, note)
+        except RuntimeError:
+            pass   # 視窗已經關了
 
 
 class Station(QObject):
@@ -137,6 +143,11 @@ class Station(QObject):
         self._rate_timer = QTimer(self)
         self._rate_timer.setInterval(1000)
         self._rate_timer.timeout.connect(self._emit_rate)
+
+    @property
+    def nodes(self) -> list[str]:
+        """目前站上的 service 名稱。Launcher 用它判斷新的 node 出現了沒。"""
+        return list(self._nodes)
 
     # ------------------------------------------------------------- 生命週期
 
@@ -293,6 +304,9 @@ class Station(QObject):
                     commands = common.describe(service)
                 except Exception:
                     commands = []
-                self.describe_ready.emit(service, commands)
+                try:
+                    self.describe_ready.emit(service, commands)
+                except RuntimeError:
+                    pass   # 視窗已經關了
 
         self._pool.start(_Describe())
