@@ -1,26 +1,6 @@
-"""Node 基底:service、describe、set_channel、status、activity、COM 掃描、payload。"""
+"""node 基底與全站共通契約。
 
-from .describe import Arg, Command, to_json
-from .node import DeviceError, Node
-from .payload import TIME_FORMAT, measurement, stamp
-from .scan import find_port, scan
-from .topics import (
-    is_common, is_measurement, is_measurement_topic, is_raw,
-)
-
-__all__ = [
-    "Arg",
-    "Command",
-    "to_json",
-    "Node",
-    "DeviceError",
-    "measurement",
-    "stamp",
-    "TIME_FORMAT",
-    "is_common",
-    "is_raw",
-    "is_measurement_topic",
-    "is_measurement",
-    "find_port",
-    "scan",
-]
+這裡**刻意不做轉出**:要用什麼就從子模組直接拿(`from .core.node import Node`)。
+轉出一層的代價是 import 一個東西會把整包拖進來 —— 例如想用 `topics` 的純函式
+卻連 eCAL 一起載入。
+"""

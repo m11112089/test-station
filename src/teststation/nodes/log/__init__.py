@@ -1,6 +1,5 @@
-"""Log —— 全站唯一會寫檔的 node(README 1.3、4)。"""
+"""Log —— 全站唯一會寫檔的 node(README 1.3、4)。
 
-from .node import LogNode
-from .sync import Mark, Series, load
-
-__all__ = ["LogNode", "Series", "Mark", "load"]
+**不轉出任何東西**,這樣 `sync` 與 `report` 可以在沒有 eCAL 的環境下匯入 ——
+產報告本來就不需要跟站台說話。
+"""

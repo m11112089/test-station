@@ -410,6 +410,12 @@ test-station/
 
 資料夾與模組名稱中,型號的連字號以底線取代(`pfr_100l`);topic 與 service 名稱保留原廠寫法(`PFR-100L`)。
 
+**一個 node 一個資料夾**,契約文件(`INTERFACE.md`)跟程式放一起。
+
+`__init__.py` **刻意不做轉出**,要什麼就從子模組直接拿(`from .core.node import Node`)。
+轉出一層的代價是匯入任何子模組都會先跑父 package —— 想用 `sync`、`report`、
+`protocol` 這些純邏輯,會被迫連 eCAL 一起載入。`tests/test_shared.py` 釘住了這件事。
+
 `docs/` 底下每份文件都分成兩部分:前半給操作的人,後半是程式碼規劃。
 
 ## 8. 預設值(可調整)

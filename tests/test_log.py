@@ -11,7 +11,7 @@ import json
 import pytest
 
 from teststation.nodes.log import report, sync
-from teststation.nodes.log.sync import Mark, Series
+from teststation.nodes.log.sync import Series
 
 CSV = """t,topic,name,value,unit
 2026-09-20 20:12:38.824,BTM-4208SD/COM11/ch3,ch3,37.6,°C

@@ -106,3 +106,37 @@ def test_bad_json_raises_value_error():
 def test_a_json_array_is_not_a_payload():
     with pytest.raises(ValueError):
         common.prepare_payload("[1, 2, 3]")
+
+
+# ------------------------------------------ 純邏輯模組不該拖進 eCAL
+
+PURE_MODULES = [
+    "teststation.core.topics",
+    "teststation.core.describe",
+    "teststation.core.payload",
+    "teststation.nodes.btm_4208sd.protocol",
+    "teststation.nodes.log.sync",
+    "teststation.nodes.log.report",
+    "teststation.visualization",
+]
+
+
+@pytest.mark.parametrize("module", PURE_MODULES)
+def test_pure_modules_import_without_ecal(module):
+    """這些模組不跟站台說話,匯入它們不該載入 eCAL。
+
+    曾經不成立:package 的 `__init__.py` 轉出 node 類別,於是匯入任何子模組都會
+    先跑父 package,把 eCAL 一起拖進來 —— 文件寫著「不碰 eCAL」,實際上碰了。
+    所以這裡開一個乾淨的直譯器來看。
+    """
+    import subprocess
+    import sys
+
+    code = (
+        f"import sys, importlib; importlib.import_module({module!r}); "
+        "print(any('ecal' in m for m in sys.modules))"
+    )
+    result = subprocess.run([sys.executable, "-c", code],
+                            capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "False", f"{module} 把 eCAL 拖進來了"
