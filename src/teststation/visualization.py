@@ -22,11 +22,11 @@ from .nodes.log import report, sync
 
 def build(csv_path: Path, output: Path | None = None, title: str = "") -> Path:
     """讀 CSV,寫出報告,回傳它的路徑。"""
-    series, marks = sync.load(csv_path)
-    if not series and not marks:
+    series = sync.load(csv_path)
+    if not series:
         raise ValueError(f"{csv_path} 裡沒有可畫的資料")
     data = report.build_data(
-        series, marks, title=title or csv_path.parent.name or csv_path.stem
+        series, title=title or csv_path.parent.name or csv_path.stem
     )
     target = output or csv_path.with_name("report.html")
     target.parent.mkdir(parents=True, exist_ok=True)

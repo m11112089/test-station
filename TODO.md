@@ -32,10 +32,9 @@
 ## Log — 待補
 
 - [ ] `console.log` 要等 Serial / SSH DUT node 才會有內容。
-- [ ] 長時間 run 的報告產生時間沒量過。UI 按「看報告」是同步跑的,
-      CSV 很大時畫面會卡住幾秒 —— 真的卡到再丟 worker。
-- [ ] 報告的 `bands`(區段底色)目前恆空;`mark` 只畫成垂直線。
-      要把成對的 mark 變成區段(例如 power-on 期間)還沒做。
+- [ ] 長時間 run 的 `uv run visualization` 花多久沒量過。
+- [ ] 報告的 `bands`(區段底色)與 `limits`(水平參考線)目前恆空。
+      模板支援,但還沒有東西去填 —— 要標示 power-on 期間之類的再說。
 - [ ] 長時間測試的報告大小沒試過:12 小時 × 12 channel 約 30 萬點。
       撐不住再談抽稀,別先做。
 

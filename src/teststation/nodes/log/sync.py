@@ -19,8 +19,6 @@ from pathlib import Path
 from ...core.payload import TIME_FORMAT
 
 CSV_HEADER = ["t", "topic", "name", "value", "unit"]
-MARK_TOPIC = "Log/mark"
-"""mark 也寫進同一個 data.csv,省得再開一個檔(README 4 只列了三個檔案)。"""
 
 
 def to_ms(text: str) -> int:
@@ -47,19 +45,12 @@ class Series:
         return self.topic.rsplit("/", 1)[-1]
 
 
-@dataclass(frozen=True)
-class Mark:
-    t: int
-    text: str
-
-
-def load(path: Path) -> tuple[list[Series], list[Mark]]:
-    """讀 long format 的 data.csv,回傳 (series, marks)。
+def load(path: Path) -> list[Series]:
+    """讀 long format 的 data.csv,依 topic 分組。
 
     壞掉的行直接跳過 —— Log 被砍掉時最後一行可能只寫到一半(README 6)。
     """
     series: dict[str, Series] = {}
-    marks: list[Mark] = []
 
     with path.open(newline="", encoding="utf-8") as handle:
         for row in csv.DictReader(handle):
@@ -69,10 +60,6 @@ def load(path: Path) -> tuple[list[Series], list[Mark]]:
                 continue
 
             topic = (row.get("topic") or "").strip()
-            if topic == MARK_TOPIC:
-                marks.append(Mark(moment, (row.get("name") or "").strip()))
-                continue
-
             try:
                 value = float(row["value"])
             except (ValueError, KeyError, TypeError):
@@ -87,13 +74,10 @@ def load(path: Path) -> tuple[list[Series], list[Mark]]:
             current.t.append(moment)
             current.v.append(value)
 
-    ordered = sorted(series.values(), key=lambda s: s.topic)
-    marks.sort(key=lambda m: m.t)
-    return ordered, marks
+    return sorted(series.values(), key=lambda s: s.topic)
 
 
-def span(series: list[Series], marks: list[Mark]) -> tuple[int, int]:
+def span(series: list[Series]) -> tuple[int, int]:
     """整份記錄的時間範圍。沒有任何資料時回 (0, 0)。"""
     moments = [t for s in series for t in (s.t[:1] + s.t[-1:])]
-    moments += [m.t for m in marks]
     return (min(moments), max(moments)) if moments else (0, 0)

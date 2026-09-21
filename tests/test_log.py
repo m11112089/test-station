@@ -17,7 +17,6 @@ CSV = """t,topic,name,value,unit
 2026-09-20 20:12:38.824,BTM-4208SD/COM11/ch3,ch3,37.6,°C
 2026-09-20 20:12:40.075,BTM-4208SD/COM11/ch1,ch1,31.5,°C
 2026-09-20 20:12:40.574,BTM-4208SD/COM11/ch3,ch3,37.7,°C
-2026-09-20 20:12:42.838,Log/mark,DUT power on,,
 2026-09-20 20:12:43.573,BTM-4208SD/COM11/ch1,SoC,31.6,°C
 2026-09-20 20:12:44.000,PFR-100L/COM20/voltage,voltage,12.0,V
 """
@@ -46,7 +45,7 @@ def test_millisecond_precision_survives():
 
 def test_series_keep_their_own_sample_times(run_dir):
     """核心決定:每條 series 各自的時間戳,長度不必相同。"""
-    series, _marks = sync.load(run_dir / "data.csv")
+    series = sync.load(run_dir / "data.csv")
     by_topic = {s.topic: s for s in series}
     assert len(by_topic["BTM-4208SD/COM11/ch3"].t) == 2
     assert len(by_topic["BTM-4208SD/COM11/ch1"].t) == 2
@@ -55,26 +54,15 @@ def test_series_keep_their_own_sample_times(run_dir):
         assert len(item.t) == len(item.v)
 
 
-def test_marks_are_pulled_out_of_the_same_file(run_dir):
-    _series, marks = sync.load(run_dir / "data.csv")
-    assert [m.text for m in marks] == ["DUT power on"]
-    assert marks[0].t == sync.to_ms("2026-09-20 20:12:42.838")
-
-
-def test_marks_are_not_a_series(run_dir):
-    series, _marks = sync.load(run_dir / "data.csv")
-    assert sync.MARK_TOPIC not in {s.topic for s in series}
-
-
 def test_renaming_mid_run_takes_the_latest_name(run_dir):
     """測試中途下 set_channel,報告上要用新名字。"""
-    series, _ = sync.load(run_dir / "data.csv")
+    series = sync.load(run_dir / "data.csv")
     ch1 = next(s for s in series if s.topic.endswith("ch1"))
     assert ch1.name == "SoC"
 
 
 def test_device_and_channel_come_from_the_topic(run_dir):
-    series, _ = sync.load(run_dir / "data.csv")
+    series = sync.load(run_dir / "data.csv")
     ch1 = next(s for s in series if s.topic.endswith("ch1"))
     assert (ch1.device, ch1.channel) == ("BTM-4208SD", "ch1")
 
@@ -82,33 +70,33 @@ def test_device_and_channel_come_from_the_topic(run_dir):
 def test_a_truncated_last_line_is_skipped(tmp_path):
     """Log 被砍掉時最後一行可能只寫到一半(README 6)。"""
     (tmp_path / "data.csv").write_text(CSV + "2026-09-20 20:12:45.0", encoding="utf-8")
-    series, _ = sync.load(tmp_path / "data.csv")
+    series = sync.load(tmp_path / "data.csv")
     assert sum(len(s.v) for s in series) == 5
 
 
 def test_non_numeric_values_are_skipped(tmp_path):
     (tmp_path / "data.csv").write_text(
         CSV + "2026-09-20 20:12:46.000,X/COM1/ch1,ch1,not-a-number,V\n", encoding="utf-8")
-    series, _ = sync.load(tmp_path / "data.csv")
+    series = sync.load(tmp_path / "data.csv")
     assert "X/COM1/ch1" not in {s.topic for s in series}
 
 
-def test_span_covers_data_and_marks(run_dir):
-    series, marks = sync.load(run_dir / "data.csv")
-    start, end = sync.span(series, marks)
+def test_span_covers_the_whole_record(run_dir):
+    series = sync.load(run_dir / "data.csv")
+    start, end = sync.span(series)
     assert start == sync.to_ms("2026-09-20 20:12:38.824")
     assert end == sync.to_ms("2026-09-20 20:12:44.000")
 
 
 def test_span_of_nothing_is_zero():
-    assert sync.span([], []) == (0, 0)
+    assert sync.span([]) == (0, 0)
 
 
 # --------------------------------------------------------------- 報告
 
 def test_build_data_keeps_per_series_times(run_dir):
-    series, marks = sync.load(run_dir / "data.csv")
-    data = report.build_data(series, marks, title="t")
+    series = sync.load(run_dir / "data.csv")
+    data = report.build_data(series, title="t")
     lengths = {c["name"]: len(c["t"]) for c in data["cols"]}
     assert sorted(lengths.values()) == [1, 2, 2]
     for col in data["cols"]:
@@ -117,8 +105,8 @@ def test_build_data_keeps_per_series_times(run_dir):
 
 def test_times_are_offsets_from_t0(run_dir):
     """存相對值省空間;模板那邊再加回 t0。"""
-    series, marks = sync.load(run_dir / "data.csv")
-    data = report.build_data(series, marks, title="t")
+    series = sync.load(run_dir / "data.csv")
+    data = report.build_data(series, title="t")
     assert data["t0"] == sync.to_ms("2026-09-20 20:12:38.824")
     assert min(t for c in data["cols"] for t in c["t"]) == 0
     assert all(t >= 0 for c in data["cols"] for t in c["t"])
@@ -126,30 +114,23 @@ def test_times_are_offsets_from_t0(run_dir):
 
 def test_no_grid_fields_are_emitted(run_dir):
     """t0/dt/n 的等間隔網格已經拿掉了,別讓它悄悄回來。"""
-    series, marks = sync.load(run_dir / "data.csv")
-    data = report.build_data(series, marks, title="t")
+    series = sync.load(run_dir / "data.csv")
+    data = report.build_data(series, title="t")
     assert "dt" not in data and "n" not in data
 
 
 def test_groups_come_from_the_device(run_dir):
-    series, marks = sync.load(run_dir / "data.csv")
-    data = report.build_data(series, marks, title="t")
+    series = sync.load(run_dir / "data.csv")
+    data = report.build_data(series, title="t")
     assert data["order"] == ["BTM-4208SD", "PFR-100L"]
     assert {c["group"] for c in data["cols"]} == {"BTM-4208SD", "PFR-100L"}
-
-
-def test_marks_reach_the_report(run_dir):
-    series, marks = sync.load(run_dir / "data.csv")
-    data = report.build_data(series, marks, title="t")
-    assert data["marks"] == [
-        {"t": sync.to_ms("2026-09-20 20:12:42.838"), "text": "DUT power on"}]
 
 
 def test_duplicate_labels_are_disambiguated():
     """兩台同型裝置都有 ch1 時,圖例不能有兩條一樣的名字。"""
     a = Series("BTM-4208SD/COM7/ch1", "°C", "ch1", [0], [1.0])
     b = Series("BTM-4208SD/COM8/ch1", "°C", "ch1", [0], [2.0])
-    data = report.build_data([a, b], [], title="t")
+    data = report.build_data([a, b], title="t")
     names = [c["name"] for c in data["cols"]]
     assert len(set(names)) == 2
     assert all("ch1" in n for n in names)
@@ -170,7 +151,7 @@ def test_report_is_self_contained(run_dir):
 
 def test_report_falls_back_to_the_cdn_and_says_so(run_dir, monkeypatch, tmp_path):
     monkeypatch.setattr(report, "PLOTLY_JS", tmp_path / "missing.js")
-    html = report.render(report.build_data([], [], title="t"))
+    html = report.render(report.build_data([], title="t"))
     assert '<script src="' in html and "cdn.plot.ly" in html
     assert "離線打不開" in html
 

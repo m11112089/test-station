@@ -209,78 +209,6 @@ def test_plan_panel_survives_an_empty_plans_dir(station, tmp_path):
     assert panel._plans.currentText().startswith("(")
 
 
-def test_log_panel_sends_start_mark_stop(station, monkeypatch, tmp_path):
-    sent = []
-    monkeypatch.setattr(station, "call", lambda service, line: sent.append((service, line)))
-    panel = LogPanel(station, tmp_path)
-    panel._run_name.setText("burn_in_45C")
-    panel._start()
-    panel._mark_text.setText("DUT power on")
-    panel._mark()
-    assert sent == [("Log", "start burn_in_45C"), ("Log", "mark DUT power on")]
-
-
-def test_an_empty_run_name_still_starts(station, monkeypatch, tmp_path):
-    """按 Start 一定要有反應。逼人先想名字只會換來「按了沒反應」。"""
-    sent = []
-    monkeypatch.setattr(station, "call", lambda service, line: sent.append((service, line)))
-    panel = LogPanel(station, tmp_path)
-    panel._start()
-    assert sent == [("Log", "start run")]
-
-
-def test_spaces_in_a_run_name_become_underscores(station, monkeypatch, tmp_path):
-    """run 名稱是命令的最後一個參數,帶空白會變成資料夾名裡的空白。"""
-    sent = []
-    monkeypatch.setattr(station, "call", lambda service, line: sent.append((service, line)))
-    panel = LogPanel(station, tmp_path)
-    panel._run_name.setText("burn in 45C")
-    panel._start()
-    assert sent == [("Log", "start burn_in_45C")]
-
-
-def test_log_panel_lists_runs_newest_first(station, tmp_path):
-    for name in ("2026-09-19_100000_a", "2026-09-20_100000_b"):
-        (tmp_path / name).mkdir()
-        (tmp_path / name / "data.csv").write_text("t,topic,name,value,unit\n",
-                                                  encoding="utf-8")
-    panel = LogPanel(station, tmp_path)
-    assert panel._runs.item(0).text().startswith("2026-09-20_100000_b")
-
-
-def test_log_panel_offers_to_build_a_missing_report(station, tmp_path):
-    """Log 不再自動產報告,所以清單要說得出來「按一下就有」。"""
-    (tmp_path / "2026-09-20_100000_a").mkdir()
-    panel = LogPanel(station, tmp_path)
-    assert "按「看報告」產生" in panel._runs.item(0).text()
-
-
-def test_log_panel_builds_the_report_on_demand(station, tmp_path):
-    run = tmp_path / "2026-09-20_100000_a"
-    run.mkdir()
-    (run / "data.csv").write_text(
-        "t,topic,name,value,unit\n"
-        "2026-09-20 10:00:00.000,X/COM1/ch1,ch1,1.0,V\n"
-        "2026-09-20 10:00:01.000,X/COM1/ch1,ch1,2.0,V\n", encoding="utf-8")
-    panel = LogPanel(station, tmp_path)
-    asked = []
-    panel.report_requested.connect(asked.append)
-    panel._runs.setCurrentRow(0)
-    panel._open(panel._runs.currentItem())
-    assert (run / "report.html").is_file()
-    assert asked and asked[0].endswith("report.html")
-
-
-def test_log_panel_says_so_when_there_is_nothing_to_plot(station, tmp_path):
-    (tmp_path / "2026-09-20_100000_a").mkdir()
-    panel = LogPanel(station, tmp_path)
-    panel._runs.setCurrentRow(0)
-    panel._open(panel._runs.currentItem())
-    assert "失敗" in panel._notice.text()
-
-
-# ------------------------------------------------------- 要錄哪些 topic
-
 def _tree(panel):
     """(node 名稱, [channel 名稱]) 的清單,照畫面上的順序。"""
     out = []
@@ -293,7 +221,7 @@ def _tree(panel):
 
 def test_log_panel_groups_topics_under_their_node(station, tmp_path):
     """一個 node 一層,channel 掛在底下。共通 topic 不該出現。"""
-    panel = LogPanel(station, tmp_path)
+    panel = LogPanel(station)
     station.topics_changed.emit([
         "BTM-4208SD/COM11/ch3", "BTM-4208SD/COM11/ch1", "BTM-4208SD/COM11/status",
         "BTM-4208SD/COM11/activity", "PFR-100L/COM20/voltage", "Serial/COM5/raw"])
@@ -306,7 +234,7 @@ def test_log_panel_groups_topics_under_their_node(station, tmp_path):
 
 def test_rebuilding_the_tree_keeps_the_parent_state(station, tmp_path):
     """站上多一個 topic 會重建整棵樹;已經全選的 node 不該變回沒勾。"""
-    panel = LogPanel(station, tmp_path)
+    panel = LogPanel(station)
     station.topics_changed.emit(["X/COM1/ch1", "X/COM1/ch2"])
     panel._topics.topLevelItem(0).setCheckState(0, Qt.Checked)
     station.topics_changed.emit(["X/COM1/ch1", "X/COM1/ch2", "Y/COM2/ch1"])
@@ -315,7 +243,7 @@ def test_rebuilding_the_tree_keeps_the_parent_state(station, tmp_path):
 
 
 def test_checking_a_node_selects_all_its_channels(station, tmp_path):
-    panel = LogPanel(station, tmp_path)
+    panel = LogPanel(station)
     station.topics_changed.emit([
         "BTM-4208SD/COM11/ch1", "BTM-4208SD/COM11/ch3", "PFR-100L/COM20/voltage"])
     panel._topics.topLevelItem(0).setCheckState(0, Qt.Checked)
@@ -324,7 +252,7 @@ def test_checking_a_node_selects_all_its_channels(station, tmp_path):
 
 
 def test_unchecking_a_node_clears_its_channels(station, tmp_path):
-    panel = LogPanel(station, tmp_path)
+    panel = LogPanel(station)
     station.topics_changed.emit(["X/COM1/ch1", "X/COM1/ch2"])
     parent = panel._topics.topLevelItem(0)
     parent.setCheckState(0, Qt.Checked)
@@ -333,7 +261,7 @@ def test_unchecking_a_node_clears_its_channels(station, tmp_path):
 
 
 def test_a_node_with_some_channels_shows_as_partial(station, tmp_path):
-    panel = LogPanel(station, tmp_path)
+    panel = LogPanel(station)
     station.topics_changed.emit(["X/COM1/ch1", "X/COM1/ch2"])
     parent = panel._topics.topLevelItem(0)
     parent.child(0).setCheckState(0, Qt.Checked)
@@ -343,25 +271,16 @@ def test_a_node_with_some_channels_shows_as_partial(station, tmp_path):
 def test_applying_a_selection_sends_one_record_command(station, tmp_path, monkeypatch):
     sent = []
     monkeypatch.setattr(station, "call", lambda s_, l_: sent.append((s_, l_)))
-    panel = LogPanel(station, tmp_path)
+    panel = LogPanel(station)
     station.topics_changed.emit(["X/COM1/ch1", "Y/COM2/ch1"])
     panel._check_all(True)
     panel._apply_topics()
     assert sent == [("Log", "record X/COM1/ch1 Y/COM2/ch1")]
 
 
-def test_applying_an_empty_selection_is_refused(station, tmp_path, monkeypatch):
-    sent = []
-    monkeypatch.setattr(station, "call", lambda s_, l_: sent.append((s_, l_)))
-    panel = LogPanel(station, tmp_path)
-    station.topics_changed.emit(["X/COM1/ch1"])
-    panel._apply_topics()
-    assert sent == [] and "至少要選一個" in panel._notice.text()
-
-
 def test_selection_from_the_node_is_reflected(station, tmp_path):
     """設定可能來自 launch 檔,畫面要跟著 Log 回報的走。"""
-    panel = LogPanel(station, tmp_path)
+    panel = LogPanel(station)
     station.topics_changed.emit(["X/COM1/ch1", "X/COM1/ch2"])
     station.log_state.emit({"recording": False, "selected": ["X/COM1/ch2"]})
     assert panel.selected_topics() == ["X/COM1/ch2"]
@@ -370,7 +289,7 @@ def test_selection_from_the_node_is_reflected(station, tmp_path):
 def test_ticking_a_box_survives_the_state_push(station, tmp_path):
     """`Log/state` 是 1 Hz 推的。每次都重寫勾選框的話,使用者勾第二個之前
     第一個就被蓋回去 —— 畫面不能跟人搶輸入。"""
-    panel = LogPanel(station, tmp_path)
+    panel = LogPanel(station)
     station.topics_changed.emit(["X/COM1/ch1", "X/COM1/ch2"])
     state = {"recording": False, "selected": []}
     station.log_state.emit(state)
@@ -388,37 +307,9 @@ def test_ticking_a_box_survives_the_state_push(station, tmp_path):
 
 def test_a_real_change_still_wins(station, tmp_path):
     """但 node 那邊真的換了選擇(launch 檔、測試計畫),畫面要跟上。"""
-    panel = LogPanel(station, tmp_path)
+    panel = LogPanel(station)
     station.topics_changed.emit(["X/COM1/ch1", "X/COM1/ch2"])
     station.log_state.emit({"recording": False, "selected": []})
     next(panel._leaves()).setCheckState(0, Qt.Checked)
     station.log_state.emit({"recording": False, "selected": ["X/COM1/ch2"]})
     assert panel.selected_topics() == ["X/COM1/ch2"]
-
-
-def test_log_panel_asks_the_window_to_show_the_report(station, tmp_path):
-    run = tmp_path / "2026-09-20_100000_a"
-    run.mkdir()
-    (run / "report.html").write_text("<html></html>", encoding="utf-8")
-    panel = LogPanel(station, tmp_path)
-    asked = []
-    panel.report_requested.connect(asked.append)
-    panel._runs.setCurrentRow(0)
-    panel._open(panel._runs.currentItem())
-    assert asked and asked[0].endswith("report.html")
-
-
-def test_log_panel_follows_the_recording_state(station, tmp_path):
-    """狀態來自 Log node 推的 `Log/state`,所以 st 那邊下的 start 這裡也會亮。"""
-    panel = LogPanel(station, tmp_path)
-    assert panel._start_btn.isEnabled() and not panel._mark_btn.isEnabled()
-
-    station.log_state.emit({"recording": True, "run": "burn_in", "rows": 42,
-                            "marks": 1, "topics": 3, "started": "2026-09-20 10:00:00.000",
-                            "dir": str(tmp_path)})
-    assert "錄製中" in panel._state.text() and "42" in panel._state.text()
-    assert not panel._start_btn.isEnabled() and panel._mark_btn.isEnabled()
-
-    station.log_state.emit({"recording": False})
-    assert "未錄製" in panel._state.text()
-    assert panel._start_btn.isEnabled() and not panel._mark_btn.isEnabled()

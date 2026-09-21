@@ -21,7 +21,8 @@ Log node 把**選定的** topic 寫成 CSV;報告是事後另外產的。
 **Log node 在 UI 一開就起來了**,不用另外啟動。在 UI 的 **Log 分頁**
 (或在左邊 node 清單點 `Log`,會直接切過去):
 
-1. **勾選要記錄的 topic**。清單依 node 分層,勾 node 那一列就是「這台全選」:
+**檔案在 Log node 啟動時就開好了**(`logs/<啟動時間>/data.csv`),所以沒有開始按鈕。
+勾選要記錄的 topic,按「套用選擇」那一刻就開始寫:
 
    ```
    [v] BTM-4208SD/COM11
@@ -32,30 +33,26 @@ Log node 把**選定的** topic 寫成 CSV;報告是事後另外產的。
        [ ] current
    ```
 
-   `status` / `activity` / `state` 不會出現(那是 node 自己的狀態)。勾完按「套用選擇」。
-2. 按 **Start**。**run 名稱可以留空** —— 留空就叫 `run`,資料夾前面本來就有時間戳
-   (`2026-09-21_113154_run`),不會撞在一起。名稱裡的空白會換成底線。
-3. 過程中按 **Mark** 打事件標記。
-4. 按 **Stop** 關檔。
+`status` / `activity` / `state` 不會出現(那是 node 自己的狀態)。
 
-一個都沒勾就按 Start 會被擋下來:`ERR no topics selected`,紅字顯示在狀態下面那一行。
+改變主意就重新勾、再套用一次 —— 寫進去的 topic 立刻跟著換,不用停下來。
+一個都沒勾就是什麼都不寫,檔案還開著等你選。
 
 錄製中畫面顯示:
 
 ```
-● 錄製中 burn_in_45C
-1523 筆 · 2 個 mark · 3 個 topic · 起於 2026-09-20 20:16:53.272
-C:\...\logs\2026-09-20_201653_burn_in_45C
+● 記錄中 1523 筆 · 3 個 topic
+C:\...\logs\2026-09-21_114517\data.csv
 ```
 
 狀態是 **Log node 推過來的**(`Log/state`),不是畫面自己猜的 —— 測試計畫用
-`control` 下的 `start()`,這個畫面一樣會亮、筆數一樣會跳,勾選框也會跟著變。
+`control` 換了檔或改了選擇,這個畫面一樣會跟著動,勾選框也會。
 
 **選擇是一個設定**,所以「存成 launch 檔」會把它存下來,下次開檔自動帶回。
 
 ## 產出
 
-`logs/YYYY-MM-DD_HHMMSS_<run_name>/`
+`logs/YYYY-MM-DD_HHMMSS/`
 
 | 檔案 | 內容 |
 |---|---|
@@ -66,7 +63,6 @@ C:\...\logs\2026-09-20_201653_burn_in_45C
 t,topic,name,value,unit
 2026-09-20 20:12:38.824,BTM-4208SD/COM11/ch3,ch3,37.6,°C
 2026-09-20 20:12:40.075,BTM-4208SD/COM11/ch1,ch1,31.5,°C
-2026-09-20 20:12:42.838,Log/mark,DUT power on,,
 2026-09-20 20:12:44.000,PFR-100L/COM20/voltage,voltage,12.0,V
 ```
 
@@ -89,14 +85,11 @@ logs\2026-09-20_201653_burn_in_45C\report.html  (4.6 MB,plotly 已內嵌,離線�
 | `-t <title>` | 報告標題(預設用 run 資料夾名) |
 | `--open` | 產完直接用瀏覽器打開 |
 
-在 UI 裡按 Log 分頁的「**看報告**」也可以 —— 報告不存在就現場產一份,
-用的是同一個 `build()`,沒有第二份實作。產完開在「報告」分頁裡。
-
 報告是**自足的**:plotly 內嵌,所以可以複製到隨身碟、寄出去、在沒網路的機台上開。
 代價是每份約 4.6 MB。
 
 報告上能做的事:拖曳框選一段時間看統計(筆數 / 最小 / 最大 / 平均 / 標準差)、
-點圖例開關單一條線、用上方按鈕只看某一組、複製統計表。`mark` 畫成垂直虛線加標籤。
+點圖例開關單一條線、用上方按鈕只看某一組、複製統計表。
 
 ## 時區
 
@@ -108,8 +101,9 @@ log 裡的時間是**不帶時區的牆上時間**。報告刻意也用同樣方
 ## 已知限制
 
 - `console.log` 要等 Serial / SSH DUT node 做好才會有東西。
-- 報告的 `bands`(區段底色)目前是空的 —— `mark` 畫成垂直線。要把成對的 mark
-  變成區段還沒做。
+- 報告的 `bands`(區段底色)與 `limits`(水平參考線)目前都是空的 ——
+  模板支援,但還沒有東西去填它們。
+- 一個 Log 行程 = 一個檔案。要分段就靠 `start <name>`(測試計畫用)。
 
 ---
 ---
@@ -120,7 +114,7 @@ log 裡的時間是**不帶時區的牆上時間**。報告刻意也用同樣方
 
 | 模組 | 負責 | 不該出現在這裡的東西 |
 |---|---|---|
-| `nodes/log/node.py` | 訂閱選到的 topic、寫檔、`record`/`start`/`mark`/`stop` | 任何圖表邏輯 |
+| `nodes/log/node.py` | 訂閱選到的 topic、寫檔、`record`/`start`/`stop` | 任何圖表邏輯 |
 | `nodes/log/sync.py` | 讀回 `data.csv` → series。**完全不碰 eCAL** | 任何 HTML |
 | `nodes/log/report.py` | series → `DATA` → 灌進模板 | 任何 I/O 以外的統計 |
 | `visualization.py` | 命令列外殼:參數、找檔、印結果 | 任何實際的轉換 |
@@ -134,21 +128,22 @@ from teststation.visualization import build
 build(Path("logs/2026-09-20_201653_burn_in_45C/data.csv"))
 ```
 
-UI 的「看報告」叫的就是這個 `build()`。
+UI 完全不碰報告 —— 它只管記錄。
 
 ## 四個設計決定
 
 **一、記錄與視覺化分家。**
-`stop` 只關檔。報告事後跑 `visualization`。CSV 是資料,報告是它的一種樣子 ——
+Log 只關檔,不產報告。CSV 是資料,報告是它的一種樣子 ——
 換一種畫法不該需要重跑一次幾小時的測試。
 
-**二、只錄選定的 topic。**
-`record` 一次給完整份清單,覆蓋前一次。它是 **setting**,所以會被存進 launch 檔
-下次帶回來。沒選就 `start` 回 `ERR` —— 什麼都沒開始,那是錯誤不是成功。
+**二、一啟動就開檔,設定完就開始寫。**
+沒有「開始記錄」這個動作。少一個動作就少一個「我到底按了沒」的狀態,
+也少一個「忘了按」導致整場沒錄到的失敗模式。
+`start <name>` 仍然存在,給測試計畫劃分 run 用。
 
-**三、mark 寫進 `data.csv`,不另開檔案。**
-用保留 topic `Log/mark`,`value` 與 `unit` 留空。事件跟資料天然照時間排好,
-`sync.load()` 讀的時候再拆出來。
+**三、只錄選定的 topic。**
+`record` 一次給完整份清單,覆蓋前一次,而且立刻生效。它是 **setting**,
+所以會被存進 launch 檔下次帶回來。
 
 **四、「有沒有 `v`」就是量測值的判準。**
 Log 收到 payload 沒有 `v` 就丟掉,UI 的即時數值表也是同一條規則。所以
@@ -177,7 +172,6 @@ sync.to_ms()                        chart_template 的 wall()
   cols: [{name, group, unit, ref, vis,
           t: [相對 t0 的整數毫秒],      // ← 每條長度可以不同
           v: [讀值]}],
-  marks: [{t, text}],
   bands: [{t0, t1}], limits: [{y, label}],
 }
 ```
@@ -211,6 +205,5 @@ monitoring API。而 `ecal.initialize()` 預設的 `init.DEFAULT`(55)**不含
 `test_log.py` 有兩個測試是**防止回歸**用的:`test_no_grid_fields_are_emitted`
 (別讓 `dt`/`n` 網格偷偷回來)與 `test_series_keep_their_own_sample_times`。
 
-報告能不能真的在瀏覽器裡跑起來,是用 QtWebEngine 載進去執行 JS 驗的(traces 數、
-mark 標註、有沒有 JS 錯誤),不在自動化測試裡 —— 那需要 4.6 MB 的報告與一個
-Chromium,跑起來太慢。
+報告能不能真的在瀏覽器裡跑起來,是手動用瀏覽器開來看,不在自動化測試裡 ——
+那需要 4.6 MB 的報告與一個 Chromium,跑起來太慢。

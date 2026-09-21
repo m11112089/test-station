@@ -4,7 +4,6 @@
 
 * `t0` + 每條 series 的 `t`(相對 t0 的整數毫秒)—— 存相對值省下大量位元組
 * `cols[]` 每條一組 `t` / `v`,**長度不必相同**
-* `marks[]` 畫成垂直虛線
 * `groups` / `order` 由 topic 的第一段(裝置名)自動分組,不認識任何特定裝置
 """
 
@@ -14,7 +13,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from .sync import Mark, Series, load, span
+from .sync import Series, load, span
 
 TEMPLATE = Path(__file__).with_name("chart_template.html")
 PLACEHOLDER = "/*DATA*/null"
@@ -40,9 +39,8 @@ def _labels(series: list[Series]) -> list[str]:
     return labels
 
 
-def build_data(series: list[Series], marks: list[Mark], *, title: str,
-               note: str = "") -> dict:
-    start, end = span(series, marks)
+def build_data(series: list[Series], *, title: str, note: str = "") -> dict:
+    start, end = span(series)
     devices = sorted({s.device for s in series})
     return {
         "title": title,
@@ -65,7 +63,6 @@ def build_data(series: list[Series], marks: list[Mark], *, title: str,
         ],
         "bands": [],
         "limits": [],
-        "marks": [{"t": m.t, "text": m.text} for m in marks],
         "note": note,
     }
 
@@ -88,8 +85,8 @@ def render(data: dict) -> str:
 
 def write(run_dir: Path, *, title: str = "", note: str = "") -> Path:
     """讀 run 資料夾裡的 data.csv,寫出 report.html,回傳它的路徑。"""
-    series, marks = load(run_dir / "data.csv")
-    data = build_data(series, marks, title=title or run_dir.name, note=note)
+    series = load(run_dir / "data.csv")
+    data = build_data(series, title=title or run_dir.name, note=note)
     target = run_dir / "report.html"
     target.write_text(render(data), encoding="utf-8")
     return target

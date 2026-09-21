@@ -53,25 +53,21 @@ set_channel ch3 SoC_heatsink
 
 之後所有畫面與報告上,那條線都叫 `SoC_heatsink`。
 
-### 3. 錄一次
+### 3. 開始記錄
 
-到「**Log**」分頁:
+**檔案在 UI 一開就建好了**(`logs/<開啟時間>/data.csv`),所以沒有「開始」按鈕。
 
-畫面上就是三個步驟:
+到「**記錄**」分頁,勾選要記錄的 topic(依 node 分層,勾 node 那一列 = 這台全選),
+按「**套用選擇**」—— 那一刻就開始寫。
 
-1. **勾選要記錄的 topic**(依 node 分層,勾 node 那一列 = 這台全選)→ 按「套用選擇」
-2. 按 **Start**。run 名稱**可以留空**,資料夾本來就有時間戳。
-   過程中按 **Mark** 打事件標記,結束按 **Stop**
-3. 下面是**過去的 run**,選一份按「看報告」
+改變主意就重新勾一次再套用,寫進去的 topic 立刻跟著換。
 
 ### 4. 產報告
 
-同一個分頁選那次 run,按「**看報告**」。報告會開在「報告」分頁裡。
-
-也可以事後在命令列產:
+關掉 UI 之後,拿那份 CSV 產:
 
 ```
-uv run visualization logs/2026-09-21_103723_burn_in_45C/data.csv
+uv run visualization logs/2026-09-21_114517/data.csv
 ```
 
 **報告是自足的檔案**(plotly 內嵌),可以複製到隨身碟、寄出去、在沒網路的電腦上開。
@@ -93,8 +89,7 @@ uv run visualization logs/2026-09-21_103723_burn_in_45C/data.csv
 | 即時數值 | 所有量測值的最新數字與**量測當下的時間戳** |
 | DUT console | DUT 的原始收發 |
 | 測試計畫 | 選腳本、Run / Abort |
-| Log | 勾 topic、Start / Mark / Stop、過去的 run |
-| 報告 | 把報告開在視窗裡 |
+| 記錄 | 勾要記錄哪些 topic,套用就開始寫 |
 | topic 工具 | 量發佈頻率、發假資料 |
 | 啟動整站 | 選 launch 檔啟動、存成 launch 檔 |
 
@@ -316,13 +311,13 @@ uv run ssh_dut    --dut axelera_board --host 192.168.1.50
 
 ### Log
 
-**只記錄選定的 topic,而且不產報告。**
+**一啟動就開檔**(`logs/<啟動時間>/`),`record` 設定完就立刻開始寫 ——
+沒有「開始記錄」這個動作。**只記錄選定的 topic,而且不產報告。**
 
 | method | 說明 |
 |---|---|
 | `record <topic> ...` | 選要記錄哪些 topic。**整份清單一次給完,覆蓋前一次**;是 setting |
-| `start <run_name>` | 建立 `logs/YYYY-MM-DD_HHMMSS_<run_name>/`,開始訂閱選定的 topic |
-| `mark <text>` | 在時間軸打事件標記(報告上畫成垂直線) |
+| `start <run_name>` | 換一個新檔(給測試計畫劃分 run 用) |
 | `stop` | 關檔 |
 
 | 檔案 | 內容 |
@@ -337,7 +332,7 @@ uv run visualization logs/<run>/data.csv
 ```
 
 由 `sync.py`(按 topic 分組,**不對齊、不重取樣**)+ `chart_template.html` 產生,
-plotly 內嵌所以離線可看。UI 的「看報告」叫的是同一份實作。詳見 [docs/log.md](docs/log.md)。
+plotly 內嵌所以離線可看。**UI 完全不碰報告**,它只管記錄。詳見 [docs/log.md](docs/log.md)。
 
 ### Main-Control — 測試計畫 runner
 

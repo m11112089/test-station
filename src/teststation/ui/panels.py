@@ -7,14 +7,13 @@
 
 from __future__ import annotations
 
-import webbrowser
 from contextlib import contextmanager
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
-    QAbstractItemView, QApplication, QComboBox, QDoubleSpinBox, QFormLayout, QGroupBox,
+    QAbstractItemView, QComboBox, QDoubleSpinBox, QGroupBox,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QPlainTextEdit, QPushButton, QSplitter, QTableWidget, QTableWidgetItem,
     QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
@@ -367,88 +366,45 @@ class PlanPanel(QGroupBox):
 
 # -------------------------------------------------------------- 6. Log 控制
 
-DEFAULT_RUN_NAME = "run"
-"""沒填 run 名稱時用這個。資料夾前面本來就有時間戳,不會撞。"""
-
-
 class LogPanel(QGroupBox):
-    """Start / Mark / Stop、看目前錄到哪、開啟過去的報告。命令送給 `Log`。
+    """要記錄哪些 topic。
 
-    狀態是 Log node 推過來的(`Log/state`),不是這裡猜的 —— 所以 `st` 那邊
-    下的 `start`,這個畫面一樣會亮起來。
+    **沒有開始/停止按鈕。** Log node 一啟動就開好檔案了,勾完按「套用選擇」
+    那一刻就開始寫 —— 少一個「我按了嗎」的狀態。
+
+    狀態是 Log node 推過來的(`Log/state`),所以測試計畫用 `control` 改了選擇,
+    這裡的勾選框也會跟著動。
     """
 
-    SERVICE = "Log"
+    SERVICE = LOG_SERVICE
 
-    report_requested = Signal(str)
-    """使用者想看某份報告(帶 report.html 的路徑)。由主視窗決定在哪顯示。"""
-
-    def __init__(self, station: Station, logs_dir: Path) -> None:
-        super().__init__("Log")
+    def __init__(self, station: Station) -> None:
+        super().__init__("記錄")
         self._station = station
-        self._logs_dir = logs_dir
-        self._recording = False
         self._node_selection: list[str] | None = None
 
         self._state = QLabel("等待 Log node…")
         self._state.setWordWrap(True)
         self._state.setTextFormat(Qt.RichText)
 
-        # 狀態是 1 Hz 推過來的,會不停覆蓋自己 —— 回覆與錯誤得有自己的一行,
-        # 不然按下去看到的訊息一秒後就被蓋掉了。
+        # 狀態是 1 Hz 推過來的,會不停覆蓋自己 —— 回覆與錯誤得有自己的一行。
         self._notice = QLabel("")
         self._notice.setWordWrap(True)
         self._notice.setTextFormat(Qt.RichText)
 
-        self._run_name = QLineEdit()
-        self._run_name.setPlaceholderText(f"選填,留空就叫 {DEFAULT_RUN_NAME}")
-        self._run_name.returnPressed.connect(self._start)
-        self._mark_text = QLineEdit()
-        self._mark_text.setPlaceholderText("事件標記,例如 DUT power on")
-        self._mark_text.returnPressed.connect(self._mark)
-
-        self._start_btn = QPushButton("Start")
-        self._start_btn.clicked.connect(self._start)
-        self._mark_btn = QPushButton("Mark")
-        self._mark_btn.clicked.connect(self._mark)
-        self._stop_btn = QPushButton("Stop")
-        self._stop_btn.setStyleSheet(f"background-color: {ERROR_COLOR}; color: white;")
-        self._stop_btn.clicked.connect(lambda: self._station.call(self.SERVICE, "stop"))
-
         # 一個 node 一層,channel 掛在底下。node 那一列的勾選框就是「這台全選」。
         self._topics = QTreeWidget()
         self._topics.setFont(MONO)
-        self._topics.setMaximumHeight(180)
         self._topics.setHeaderHidden(True)
         self._topics.itemChanged.connect(self._on_item_changed)
+
         apply_topics = QPushButton("套用選擇")
+        apply_topics.setToolTip("按下去就開始記錄勾到的 topic")
         apply_topics.clicked.connect(self._apply_topics)
         all_topics = QPushButton("全選")
         all_topics.clicked.connect(lambda: self._check_all(True))
         no_topics = QPushButton("全不選")
         no_topics.clicked.connect(lambda: self._check_all(False))
-
-        self._runs = QListWidget()
-        self._runs.setFont(MONO)
-        self._runs.itemDoubleClicked.connect(lambda item: self._open(item))
-        open_btn = QPushButton("看報告")
-        open_btn.clicked.connect(lambda: self._open(self._runs.currentItem()))
-        browser_btn = QPushButton("用瀏覽器開")
-        browser_btn.clicked.connect(
-            lambda: self._open(self._runs.currentItem(), external=True))
-        refresh = QPushButton("重新整理")
-        refresh.clicked.connect(self.refresh_runs)
-
-        form = QFormLayout()
-        form.addRow("run 名稱", self._row(self._run_name, self._start_btn))
-        form.addRow("事件標記", self._row(self._mark_text, self._mark_btn))
-        form.addRow("", self._row(self._stop_btn))
-
-        buttons = QHBoxLayout()
-        buttons.addWidget(open_btn)
-        buttons.addWidget(browser_btn)
-        buttons.addWidget(refresh)
-        buttons.addStretch()
 
         picker = QHBoxLayout()
         picker.addWidget(all_topics)
@@ -459,30 +415,12 @@ class LogPanel(QGroupBox):
         layout = QVBoxLayout(self)
         layout.addWidget(self._state)
         layout.addWidget(self._notice)
-        layout.addWidget(QLabel("<b>1.</b> 要記錄哪些 topic"))
-        layout.addWidget(self._topics)
+        layout.addWidget(self._topics, 1)
         layout.addLayout(picker)
-        layout.addWidget(QLabel("<b>2.</b> 開始錄製"))
-        layout.addLayout(form)
-        layout.addWidget(QLabel("<b>3.</b> 過去的 run"))
-        layout.addWidget(self._runs, 1)
-        layout.addLayout(buttons)
 
         station.topics_changed.connect(self._set_topics)
         station.log_state.connect(self._on_state)
         station.reply.connect(self._on_reply)
-        self._set_recording(False)
-        self.refresh_runs()
-
-    @staticmethod
-    def _row(*widgets) -> QWidget:
-        box = QWidget()
-        line = QHBoxLayout(box)
-        line.setContentsMargins(0, 0, 0, 0)
-        for widget in widgets:
-            line.addWidget(widget)
-        line.addStretch()
-        return box
 
     # ------------------------------------------------------------ topic 選擇
 
@@ -490,7 +428,6 @@ class LogPanel(QGroupBox):
         """依 node 分層列出可以記錄的 topic。
 
         `status` / `activity` / `state` 不在其中 —— 那是 node 自己的狀態(README 2.2)。
-        整個 node 都沒有可記錄的 channel 時,那一層也不會出現。
         """
         checked = set(self.selected_topics())
         grouped: dict[str, list[str]] = {}
@@ -558,22 +495,23 @@ class LogPanel(QGroupBox):
                 for j in range(parent.childCount()):
                     parent.child(j).setCheckState(0, state)
 
+    def _refresh_parents(self) -> None:
+        """訊號關著的時候 AutoTristate 不會動,所以父項的狀態手動補一次。"""
+        for i in range(self._topics.topLevelItemCount()):
+            parent = self._topics.topLevelItem(i)
+            states = {parent.child(j).checkState(0) for j in range(parent.childCount())}
+            parent.setCheckState(0, states.pop() if len(states) == 1
+                                 else Qt.PartiallyChecked)
+
     def _apply_topics(self) -> None:
-        chosen = self.selected_topics()
-        if not chosen:
-            self._notice.setText(
-                f'<span style="color:{ERROR_COLOR}">至少要選一個 topic</span>')
-            return
-        self._station.call(self.SERVICE, "record " + " ".join(chosen))
+        """送出選擇。Log 收到就立刻開始寫 —— 沒有第二個「開始」動作。"""
+        self._station.call(self.SERVICE, "record " + " ".join(self.selected_topics()))
 
     def _sync_selection(self, reported: list[str]) -> None:
         """把 Log 回報的選擇反映到勾選框。
 
         **只在它真的變了的時候動**。`Log/state` 是 1 Hz 推過來的,每次都重寫的話
         使用者勾第二個框之前,第一個就被蓋回去了 —— 畫面會跟人搶輸入。
-
-        變動的來源可能是 launch 檔、測試計畫,或這個面板自己按下「套用選擇」;
-        不管哪一種,node 說了算,所以同步過去是對的。
         """
         if reported == self._node_selection:
             return
@@ -586,126 +524,27 @@ class LogPanel(QGroupBox):
                                    else Qt.Unchecked)
             self._refresh_parents()
 
-    def _refresh_parents(self) -> None:
-        """訊號關著的時候 AutoTristate 不會動,所以父項的狀態手動補一次。"""
-        for i in range(self._topics.topLevelItemCount()):
-            parent = self._topics.topLevelItem(i)
-            states = {parent.child(j).checkState(0) for j in range(parent.childCount())}
-            parent.setCheckState(0, states.pop() if len(states) == 1
-                                 else Qt.PartiallyChecked)
-
     # ------------------------------------------------------------ 狀態顯示
 
     def _on_state(self, state: dict) -> None:
         if "selected" in state:
             self._sync_selection(state["selected"])
-        recording = bool(state.get("recording"))
-        if recording:
+        if not state.get("recording"):
             self._state.setText(
-                f'<b style="color:{STATUS_COLORS["ok"]}">● 錄製中</b> '
-                f'{state.get("run", "")}<br>'
-                f'{state.get("rows", 0)} 筆 · {state.get("marks", 0)} 個 mark · '
-                f'{state.get("topics", 0)} 個 topic · 起於 {state.get("started", "")}'
-                f'<br><span style="color:{UNKNOWN_COLOR}">{state.get("dir", "")}</span>'
-            )
-        else:
-            self._state.setText(
-                f'<span style="color:{UNKNOWN_COLOR}">○ 未錄製</span>')
-        if recording != self._recording:
-            self._set_recording(recording)
-            if not recording:
-                self.refresh_runs()   # 剛 stop,報告應該出來了
-
-    def _set_recording(self, recording: bool) -> None:
-        self._recording = recording
-        self._start_btn.setEnabled(not recording)
-        self._run_name.setEnabled(not recording)
-        self._mark_btn.setEnabled(recording)
-        self._mark_text.setEnabled(recording)
-        self._stop_btn.setEnabled(recording)
-
-    # -------------------------------------------------------------- 命令
-
-    def _start(self) -> None:
-        """run 名稱是選填的。
-
-        空白就用 `run` —— 資料夾本來就有時間戳前綴,不會撞在一起。
-        逼使用者先想一個名字,只會換來「按了沒反應」。
-        """
-        name = self._run_name.text().strip().replace(" ", "_") or DEFAULT_RUN_NAME
-        self._station.call(self.SERVICE, f"start {name}")
-
-    def _mark(self) -> None:
-        text = self._mark_text.text().strip()
-        if text:
-            self._station.call(self.SERVICE, f"mark {text}")
-            self._mark_text.clear()
+                f'<span style="color:{UNKNOWN_COLOR}">○ 沒有開啟的檔案</span>')
+            return
+        colour = STATUS_COLORS["ok"] if state.get("selected") else UNKNOWN_COLOR
+        mark = "●" if state.get("selected") else "○"
+        self._state.setText(
+            f'<b style="color:{colour}">{mark} 記錄中</b> '
+            f'{state.get("rows", 0)} 筆 · {len(state.get("selected", ()))} 個 topic<br>'
+            f'<span style="color:{UNKNOWN_COLOR}">{state.get("file", "")}</span>')
 
     def _on_reply(self, service: str, line: str, reply: str) -> None:
         if service != self.SERVICE:
             return
         colour = ERROR_COLOR if reply.startswith("ERR") else UNKNOWN_COLOR
         self._notice.setText(f'<span style="color:{colour}">{reply}</span>')
-
-    # ------------------------------------------------------------ run 清單
-
-    def refresh_runs(self) -> None:
-        """列出 logs/ 底下的 run,最新的在上面。"""
-        self._runs.clear()
-        if not self._logs_dir.is_dir():
-            self._runs.addItem(f"({self._logs_dir} 還不存在)")
-            return
-        folders = sorted((p for p in self._logs_dir.iterdir() if p.is_dir()),
-                         key=lambda p: p.name, reverse=True)
-        if not folders:
-            self._runs.addItem("(還沒有任何 run)")
-            return
-        for folder in folders:
-            rows = self._count_rows(folder / "data.csv")
-            built = (folder / "report.html").is_file()
-            note = "報告已產生" if built else "按「看報告」產生"
-            item = QListWidgetItem(f"{folder.name}    {rows} 筆 · {note}")
-            item.setData(Qt.UserRole, str(folder))
-            if not rows:
-                item.setForeground(QColor(UNKNOWN_COLOR))
-            self._runs.addItem(item)
-
-    @staticmethod
-    def _count_rows(csv_path: Path) -> int:
-        if not csv_path.is_file():
-            return 0
-        with csv_path.open(encoding="utf-8", errors="replace") as handle:
-            return max(sum(1 for _ in handle) - 1, 0)   # 扣掉標題列
-
-    def _open(self, item: QListWidgetItem | None, *, external: bool = False) -> None:
-        """開報告。不存在就現場產一份 —— Log 只負責記錄,報告是事後的事。"""
-        folder = item.data(Qt.UserRole) if item else None
-        if not folder:
-            return
-        report = Path(folder) / "report.html"
-        if not report.is_file():
-            report = self._build_report(Path(folder))
-            if report is None:
-                return
-            self.refresh_runs()
-        if external:
-            webbrowser.open(report.resolve().as_uri())
-        else:
-            self.report_requested.emit(str(report.resolve()))
-
-    def _build_report(self, folder: Path) -> Path | None:
-        """跟 `uv run visualization <data.csv>` 同一份實作。"""
-        from ..visualization import build
-
-        csv_path = folder / "data.csv"
-        self._notice.setText(f"產生報告中…{csv_path}")
-        QApplication.processEvents()      # 讓上面那行先畫出來
-        try:
-            return build(csv_path)
-        except (ValueError, OSError) as exc:
-            self._notice.setText(
-                f'<span style="color:{ERROR_COLOR}">產生報告失敗:{exc}</span>')
-            return None
 
 
 # ---------------------------------------------------- 7. topic 工具(hz / pub)
@@ -812,60 +651,3 @@ class TopicToolsPanel(QGroupBox):
         self._pub_state.setText(
             f'{topic} ← {sent} 筆 <span style="color:{colour}">{note}</span>')
         self._pub_state.setTextFormat(Qt.RichText)
-
-
-# ------------------------------------------------------- 8. 報告檢視器
-
-try:
-    from PySide6.QtWebEngineWidgets import QWebEngineView
-    WEBVIEW = True
-except ImportError:                                    # pragma: no cover
-    QWebEngineView = None
-    WEBVIEW = False
-
-
-class ReportPanel(QWidget):
-    """把 report.html 直接開在 UI 裡。
-
-    報告是自足的檔案(plotly 內嵌),所以這裡就是一個 file:// 的網頁檢視器 ——
-    跟使用者拿瀏覽器開看到的是同一份東西,沒有第二套繪圖邏輯。
-    """
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._path: Path | None = None
-        self._where = QLabel("還沒選報告 —— 去 Log 分頁挑一份 run")
-        self._where.setWordWrap(True)
-
-        reload_btn = QPushButton("重新載入")
-        reload_btn.clicked.connect(lambda: self.show_report(self._path))
-        browser_btn = QPushButton("用瀏覽器開")
-        browser_btn.clicked.connect(self._external)
-
-        bar = QHBoxLayout()
-        bar.addWidget(reload_btn)
-        bar.addWidget(browser_btn)
-        bar.addWidget(self._where, 1)
-
-        layout = QVBoxLayout(self)
-        layout.addLayout(bar)
-        if WEBVIEW:
-            self._view = QWebEngineView()
-            layout.addWidget(self._view, 1)
-        else:
-            self._view = None
-            layout.addWidget(QLabel(
-                "這台機器沒有 QtWebEngine,只能用瀏覽器開。"), 1)
-
-    def show_report(self, path: str | Path | None) -> None:
-        if not path:
-            return
-        self._path = Path(path)
-        self._where.setText(str(self._path))
-        if self._view is not None:
-            from PySide6.QtCore import QUrl
-            self._view.load(QUrl.fromLocalFile(str(self._path)))
-
-    def _external(self) -> None:
-        if self._path:
-            webbrowser.open(self._path.as_uri())

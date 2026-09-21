@@ -1,7 +1,9 @@
 """PySide6 主視窗(README 5.3)。
 
-站台**唯一的人機介面**:命令、數值、DUT console、測試計畫、Log、報告、
+站台**唯一的人機介面**:命令、數值、DUT console、測試計畫、記錄、
 topic 工具,以及依序啟動整站。
+
+報告不在這裡 —— 事後用 `uv run visualization <data.csv>` 產出來自己開。
 
 視窗本身不認識任何裝置 —— 選到哪個 node,面板就去問那個 node 要 `describe`。
 """
@@ -23,7 +25,7 @@ from ..core.topics import LOG_SERVICE
 from .bridge import Station
 from .launch import LOG_RUN, Launcher
 from .panels import (
-    MONO, CommandPanel, ConsolePanel, LogPanel, NodeList, PlanPanel, ReportPanel,
+    MONO, CommandPanel, ConsolePanel, LogPanel, NodeList, PlanPanel,
     TopicToolsPanel, ValueTable,
 )
 
@@ -162,8 +164,7 @@ class MainWindow(QMainWindow):
         self._commands = CommandPanel(self.station)
         self._console = ConsolePanel(self.station)
         self._plans = PlanPanel(self.station, root / "plans")
-        self._log = LogPanel(self.station, root / "logs")
-        self._report = ReportPanel()
+        self._log = LogPanel(self.station)
         self._tools = TopicToolsPanel(self.station)
         self._values = ValueTable(self.station)
         self._launch = LaunchBar(self.station, root)
@@ -172,13 +173,11 @@ class MainWindow(QMainWindow):
         tabs.addTab(self._commands, "命令")
         tabs.addTab(self._console, "DUT console")
         tabs.addTab(self._plans, "測試計畫")
-        tabs.addTab(self._log, "Log")
-        tabs.addTab(self._report, "報告")
+        tabs.addTab(self._log, "記錄")
         tabs.addTab(self._tools, "topic 工具")
         tabs.addTab(self._launch, "啟動整站")
 
         self._tabs = tabs
-        self._log.report_requested.connect(self._show_report)
 
         upper = QSplitter(Qt.Horizontal)
         upper.addWidget(self._nodes)
@@ -201,16 +200,12 @@ class MainWindow(QMainWindow):
         )
         self.station.start()
 
-    def _show_report(self, path: str) -> None:
-        self._report.show_report(path)
-        self._tabs.setCurrentWidget(self._report)
-
     def _on_node(self, node: str) -> None:
         self._commands.set_node(node)
         self._console.set_node(node)
         # Log 有自己的面板(勾選 topic、run 清單),通用命令按鈕做不到那些,
         # 所以選到它就切過去。選回一般裝置再切回命令面板。
-        # 只在這兩個「跟著選取走」的分頁之間換 —— 使用者正在看報告或數值時不打擾他。
+        # 只在這兩個「跟著選取走」的分頁之間換 —— 使用者正在看別的分頁時不打擾他。
         per_node = (self._log, self._commands)
         if self._tabs.currentWidget() in per_node:
             self._tabs.setCurrentWidget(
