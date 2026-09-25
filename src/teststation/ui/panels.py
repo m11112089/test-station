@@ -210,7 +210,15 @@ class ValueTable(QGroupBox):
     跨 PC 時網路延遲不該讓畫面上的時間跟記錄下來的對不起來。
     """
 
-    COLUMNS = ["TOPIC", "NAME", "VALUE", "UNIT", "TIME"]
+    COLUMNS = ["TIME", "TOPIC", "NAME", "VALUE", "UNIT"]
+    """時間戳放第一欄。
+
+    它是固定寬度的 23 個字,擺在最左邊就永遠不會被右邊的欄位擠掉 ——
+    放在最後一欄時,吃掉剩餘寬度的 TOPIC 會把它壓到只剩一半。
+    """
+
+    STRETCH = 1
+    """TOPIC 那一欄吃掉剩餘寬度;其餘各欄貼合內容,所以不會有東西被切掉。"""
 
     def __init__(self, station: Station) -> None:
         super().__init__("即時數值")
@@ -219,7 +227,9 @@ class ValueTable(QGroupBox):
         self._table.setHorizontalHeaderLabels(self.COLUMNS)
         self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._table.verticalHeader().setVisible(False)
-        self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        header = self._table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(self.STRETCH, QHeaderView.Stretch)
         self._table.setFont(MONO)
 
         layout = QVBoxLayout(self)
@@ -233,15 +243,16 @@ class ValueTable(QGroupBox):
             row = self._table.rowCount()
             self._table.insertRow(row)
             self._rows[topic] = row
-            self._table.setItem(row, 0, QTableWidgetItem(topic))
-        cells = [
-            str(payload.get("name", "")),
-            f"{payload.get('v', '')}",
-            str(payload.get("unit", "")),
-            str(payload.get("t", "")),
-        ]
-        for offset, text in enumerate(cells, start=1):
-            self._table.setItem(row, offset, QTableWidgetItem(text))
+            self._table.setItem(row, self.STRETCH, QTableWidgetItem(topic))
+        cells = {
+            "TIME": str(payload.get("t", "")),
+            "NAME": str(payload.get("name", "")),
+            "VALUE": f"{payload.get('v', '')}",
+            "UNIT": str(payload.get("unit", "")),
+        }
+        for column, text in cells.items():
+            self._table.setItem(row, self.COLUMNS.index(column),
+                                QTableWidgetItem(text))
 
 
 # ------------------------------------------------------ 4. DUT console 分頁

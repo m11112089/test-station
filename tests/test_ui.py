@@ -173,6 +173,11 @@ def test_describe_for_another_node_is_ignored(station):
 
 # ----------------------------------------------------------- 即時數值表
 
+def _cell(table, row, column):
+    """照欄位**名稱**取值,這樣調整欄位順序不會把測試弄壞。"""
+    return table._table.item(row, table.COLUMNS.index(column)).text()
+
+
 def test_value_table_adds_then_updates_in_place(station):
     table = ValueTable(station)
     station.measurement.emit("BTM-4208SD/COM11/ch1",
@@ -182,8 +187,15 @@ def test_value_table_adds_then_updates_in_place(station):
                              {"t": "2026-09-20 00:00:01.000", "v": 26.5,
                               "unit": "°C", "name": "SoC"})
     assert table._table.rowCount() == 1        # 同一個 topic 不會多開一列
-    assert table._table.item(0, 1).text() == "SoC"
-    assert table._table.item(0, 2).text() == "26.5"
+    assert _cell(table, 0, "NAME") == "SoC"
+    assert _cell(table, 0, "VALUE") == "26.5"
+    assert _cell(table, 0, "TIME") == "2026-09-20 00:00:01.000"
+    assert _cell(table, 0, "TOPIC") == "BTM-4208SD/COM11/ch1"
+
+
+def test_time_is_the_first_column(station):
+    """時間戳是固定寬度的 23 個字,擺最左邊才不會被 TOPIC 擠掉一半。"""
+    assert ValueTable.COLUMNS[0] == "TIME"
 
 
 def test_value_table_keeps_one_row_per_topic(station):
