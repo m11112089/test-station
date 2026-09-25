@@ -65,8 +65,8 @@ console 也不會有任何影響。開不起來的 port(被別的 process 佔住
 下面的**即時數值表**只會列出有插探棒的 channel:
 
 ```
-TOPIC                  NAME  VALUE  UNIT  UPDATED
-BTM-4208SD/COM11/ch1   ch1   31.0   °C    2026-09-20 00:41:30.524
+TIME                     TOPIC                  NAME  VALUE  UNIT
+2026-09-20 00:41:30.524  BTM-4208SD/COM11/ch1   ch1   31.0   °C
 ```
 
 **沒插探棒的 channel 完全不 publish**,連 topic 都不會出現。
