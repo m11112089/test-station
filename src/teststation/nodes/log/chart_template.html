@@ -48,7 +48,7 @@
 <body>
 
 <header>
-  <h1>Axelera bare board, 25 °C ambient <span class="sub" id="win"></span></h1>
+  <h1 id="title">test-station run <span class="sub" id="win"></span></h1>
   <div class="sub" id="sub"></div>
   <div class="sub" id="axnote" style="margin-top:2px"></div>
 </header>
@@ -63,7 +63,7 @@
   <button id="m-stats" type="button">Stats select</button>
   <button id="reset" type="button">Reset</button>
   <label class="chk" style="margin-left:10px"><input type="checkbox" id="bands" checked> DUT powered</label>
-  <label class="chk"><input type="checkbox" id="lims" checked> Nominal ambient</label>
+  <label class="chk"><input type="checkbox" id="lims" checked> Limits</label>
   <label class="chk" title="Hovering lists every visible signal at that instant, instead of only the nearest single point."><input type="checkbox" id="unified" checked> Compare all signals on hover</label>
 </div>
 
@@ -117,17 +117,17 @@ const toMs = v => typeof v==='number' ? v
                : Date.parse(String(v).trim().replace(' ','T').replace(/Z?$/,'Z'));
 
 /* ------------------------------------------------------------------ series */
-/* sync.py puts every source on one grid, so all traces share a single x array.
-   T = numeric ms (stats, binary search); X = wall-clock strings (Plotly). */
+/* sync.py 不對齊任何東西:每條 series 保留自己的取樣時刻。
+   s.t = numeric ms(統計與二分搜尋用);s.x = wall-clock 字串(Plotly 用)。 */
 const GROUPS = DATA.groups, ORDER = DATA.order;
 /* °C owns the left axis; every other unit shares the right one, as in the reference
    chart. Isolating one group with the buttons is what makes that scale readable. */
-const onY2 = s => s.unit!=='C';
-const AXFIX = DATA.axelera.label;
+const onY2 = s => !/^°?[CF]$/.test(s.unit||'');
+const AXFIX = (DATA.axelera||{}).label || null;   /* 選配:舊擷取腳本的修正欄 */
 
-const T = (()=>{const a=new Float64Array(DATA.n);
-  for(let i=0;i<a.length;i++) a[i]=DATA.t0+i*DATA.dt; return a;})();
-const X = Array.from(T, wall);
+/* 每條 series 帶自己的時間戳,不重取樣也不內插:報告上每個點都是真的量到的。
+   cols[].t 是相對 DATA.t0 的整數毫秒(省空間),這裡還原成絕對時間。 */
+const absT = c => Float64Array.from(c.t, o => DATA.t0 + o);
 
 const rawAxIdx = DATA.cols.findIndex(c=>c.name==='Axelera_Avg_Temp');
 const seq={};                              // per-group hue counter
@@ -150,8 +150,9 @@ const S = DATA.cols.map((c,i)=>{
     width = fix?2.2:(deep?1.8:1.3);
     dash  = deep?(fix?'solid':'dot'):(g==='sysmon'?'solid':'dashdot');
   }
-  return {name:c.name, group:g, unit:c.unit||'-', t:T, x:X, y:c.v, vis:c.vis,
-          color:color, width:width, dash:dash};
+  const t = absT(c);
+  return {name:c.name, group:g, unit:c.unit||'-', t:t, x:Array.from(t, wall), y:c.v,
+          vis:c.vis, color:color, width:width, dash:dash};
 });
 
 /* -------------------------------------------------------------------- plot */
@@ -173,11 +174,11 @@ function shapes(){
 }
 const tempShown = ()=>S.some(s=>!onY2(s) && shown.has(s.name));
 function annos(){
-  return document.getElementById('lims').checked && tempShown()
+  return (document.getElementById('lims').checked && tempShown()
     ? DATA.limits.map(l=>({text:l.label,xref:'paper',yref:'y',x:1,xanchor:'right',
         y:l.y,yanchor: l.y>0?'bottom':'top',showarrow:false,
         font:{size:11,color:tok('--ink2')},bgcolor:tok('--surface'),borderpad:2}))
-    : [];
+    : []);
 }
 function layout(){
   // the right-hand axis only appears when something is actually riding it, so the
@@ -346,21 +347,19 @@ document.getElementById('sub').textContent =
   ORDER.filter(g=>S.some(s=>s.group===g))
        .map(g=>S.filter(s=>s.group===g).length+' '+GROUPS[g].toLowerCase())
        .join(' · ')
-  +' · '+DATA.n.toLocaleString()+' rows @'+(DATA.dt/1000)+' s · '
-  +DATA.bands.length+' DUT power-on period'+(DATA.bands.length===1?'':'s')+' (blue band'
-  +(DATA.bands.length===1?'':'s')+') · '
-  +'window set by the thermocouple logger record · built '+DATA.built;
+  +' · '+S.reduce((a,s)=>a+s.y.length,0).toLocaleString()+' samples'
+  +' · each series keeps its own sample times (no resampling)'
+  +' · built '+DATA.built;
 document.getElementById('axnote').innerHTML =
-  'Shown by default: the room air probe, the board thermocouples and the DUT’s own '
-  +'component temperatures. The supply, the sysmon rails and the board ADC are loaded but '
-  +'start hidden — click them in the legend, or use the buttons above.'
-  +' &nbsp;·&nbsp; The logger only labels its channels T1…T12. '+DATA.note
-  + (DATA.axelera.fixed
+  (DATA.note||'')
+  + ((DATA.axelera||{}).fixed
       ? ' &nbsp;·&nbsp; The Axelera capture script logs the magnitude only, so sub-zero die '
         +'temperatures lose their minus sign; "'+AXFIX+'" restores it ('+DATA.axelera.fixed
         +' of '+DATA.axelera.runs+' runs), identified by the raw trace falling while the board '
         +'sensors rise.'
       : '');
+if(DATA.title){ document.title = DATA.title;
+  document.getElementById('title').firstChild.nodeValue = DATA.title+' '; }
 
 draw();
 chart.on('plotly_restyle', syncY2);

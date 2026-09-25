@@ -1,0 +1,353 @@
+"""eCAL 與 Qt 之間的橋(README 5.3)。
+
+UI 不直接碰 eCAL,一律透過這裡,理由有兩個:
+
+1. **執行緒。** eCAL 的 callback 在它自己的執行緒上跑,直接動 widget 會讓 Qt 當掉。
+   這裡把每個事件轉成 Qt signal;signal 送到住在主執行緒的接收者時會自動排隊,
+   widget 因此永遠只在主執行緒被碰到。
+2. **client 層是共用的。** service 呼叫、探索、頻率統計都用 `teststation.client`,
+   測試計畫的 `control` 之後也用同一份 —— 它不依賴 Qt(README 1.2:GUI 沒有特權)。
+
+探索用輪詢(eCAL 原生的 monitoring API),訂閱則是常駐的 —— node 出現就掛上,
+消失就拆掉,所以燈號與數值是推過來的,不是輪詢來的。
+"""
+
+from __future__ import annotations
+
+import json
+import time
+
+import ecal.nanobind_core as ecal
+from collections import deque
+
+from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, Signal
+
+from .. import client as common
+from ..core.describe import setting_key
+from ..core.topics import LOG_SERVICE, is_measurement, is_measurement_topic
+
+DISCOVERY_INTERVAL_MS = 2000
+"""多久重新問一次站上有哪些 node 與 topic。"""
+
+class _Call(QRunnable):
+    """service 呼叫會阻塞,丟到執行緒池,不要卡住畫面。"""
+
+    def __init__(self, station: "Station", service: str, line: str) -> None:
+        super().__init__()
+        self._station = station
+        self._service = service
+        self._line = line
+
+    def run(self) -> None:
+        try:
+            reply = common.call(self._service, self._line)
+        except Exception as exc:
+            reply = f"ERR {exc}"
+        try:
+            if reply.startswith("OK"):
+                self._station.remember_setting(self._service, self._line)
+            self._station.reply.emit(self._service, self._line, reply)
+        except RuntimeError:
+            pass   # 視窗已經關了,沒人要聽了
+
+
+class _Publish(QRunnable):
+    """發佈會等訂閱者配對、可能重複送,丟到執行緒池,不要卡住畫面。"""
+
+    def __init__(self, station: "Station", topic: str, payload: str,
+                 rate: float | None, count: int | None) -> None:
+        super().__init__()
+        self._station = station
+        self._topic = topic
+        self._payload = payload
+        self._rate = rate
+        self._count = count
+
+    def run(self) -> None:
+        try:
+            message = common.prepare_payload(self._payload)
+        except ValueError as exc:
+            self._emit(0, f"ERR {exc}")
+            return
+        publisher = ecal.Publisher(self._topic, common.JSON)
+        note = "" if common.wait_for_subscriber(publisher) else "(沒有人訂閱)"
+        sent = 0
+        total = self._count or 1
+        interval = 1.0 / self._rate if self._rate else 0.0
+        while sent < total:
+            message["t"] = common.stamp()
+            publisher.send(common.encode(message))
+            sent += 1
+            if interval and sent < total:
+                time.sleep(interval)
+        time.sleep(0.3)   # 讓最後一筆真的出去
+        self._emit(sent, note)
+
+    def _emit(self, sent: int, note: str) -> None:
+        try:
+            self._station.published.emit(self._topic, sent, note)
+        except RuntimeError:
+            pass   # 視窗已經關了
+
+
+class Station(QObject):
+    """站台目前的樣子,以 Qt signal 對外。"""
+
+    nodes_changed = Signal(list)
+    """list[str]:service 名稱,例如 ['BTM-4208SD/COM11', 'Log']。"""
+
+    node_status = Signal(str, str)
+    """(service, status):`ok` / `reconnecting` / `error: ...`。"""
+
+    topics_changed = Signal(list)
+    """list[str]:所有被發佈的 topic。"""
+
+    measurement = Signal(str, dict)
+    """(topic, payload):資料 topic 的一筆量測值。"""
+
+    activity = Signal(str, dict)
+    """(service, payload):node 的 activity 事件。"""
+
+    raw_line = Signal(str, str)
+    """(service, text):DUT 的一行原始輸出。"""
+
+    reply = Signal(str, str, str)
+    """(service, 送出的命令, 回覆)。"""
+
+    describe_ready = Signal(str, list)
+    """(service, 命令清單):命令面板用來長出按鈕。"""
+
+    log_state = Signal(dict)
+    """Log node 的錄製狀態(`Log/state`)。"""
+
+    rate = Signal(str, object)
+    """(topic, common.Rate | None):量測中的 topic 頻率,1 Hz 更新。"""
+
+    published = Signal(str, int, str)
+    """(topic, 送出幾筆, 說明)。"""
+
+    settings_changed = Signal()
+    """有 node 的設定值變了 —— 存 launch 檔的按鈕據此更新。"""
+
+    def __init__(self, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._pool = QThreadPool.globalInstance()
+        self._status_subs: dict[str, ecal.Subscriber] = {}
+        self._data_subs: dict[str, ecal.Subscriber] = {}
+        self._console_subs: dict[str, ecal.Subscriber] = {}
+        self._log_sub: ecal.Subscriber | None = None
+        self._rate_sub: ecal.Subscriber | None = None
+        self._rate_topic = ""
+        self._rate_times: deque[float] = deque(maxlen=50)
+        self._nodes: list[str] = []
+        self._topics: list[str] = []
+        self._describes: dict[str, list[dict]] = {}
+        self._settings: dict[str, dict[str, str]] = {}
+
+        self._timer = QTimer(self)
+        self._timer.setInterval(DISCOVERY_INTERVAL_MS)
+        self._timer.timeout.connect(self._discover)
+
+        self._rate_timer = QTimer(self)
+        self._rate_timer.setInterval(1000)
+        self._rate_timer.timeout.connect(self._emit_rate)
+
+    # --------------------------------------------------------------- 設定
+
+    @property
+    def settings(self) -> dict[str, dict[str, str]]:
+        """每個 node 目前的設定值:`{node: {key: 完整命令列}}`。
+
+        只收 node 在 `describe` 裡標成 `setting` 的命令,而且**同一個 key 取最後一次**
+        —— 所以這就是「現在的設定」,不是命令歷史。存 launch 檔用的就是它。
+        """
+        return {node: dict(items) for node, items in self._settings.items() if items}
+
+    def remember_setting(self, node: str, line: str) -> None:
+        """記下一筆成功的設定命令。不是設定的命令會被忽略。"""
+        arity = self._arity_if_setting(node, line)
+        if arity is None:
+            return
+        self._settings.setdefault(node, {})[setting_key(line, arity)] = line
+        self.settings_changed.emit()
+
+    def _arity_if_setting(self, node: str, line: str) -> int | None:
+        """這行是不是設定?是的話回傳它宣告的參數個數。"""
+        method = line.split()[0] if line.split() else ""
+        for command in self._describes.get(node, ()):
+            if command.get("name") == method:
+                if not command.get("setting"):
+                    return None
+                return len(command.get("args") or ())
+        return None
+
+    @property
+    def nodes(self) -> list[str]:
+        """目前站上的 service 名稱。Launcher 用它判斷新的 node 出現了沒。"""
+        return list(self._nodes)
+
+    # ------------------------------------------------------------- 生命週期
+
+    def start(self) -> None:
+        self.watch_log()
+        self._discover()
+        self._timer.start()
+
+    def stop(self) -> None:
+        self._timer.stop()
+        self._rate_timer.stop()
+        for sub in (self._log_sub, self._rate_sub):
+            if sub is not None:
+                sub.remove_receive_callback()
+        self._log_sub = self._rate_sub = None
+        for subs in (self._status_subs, self._data_subs, self._console_subs):
+            for sub in subs.values():
+                sub.remove_receive_callback()
+            subs.clear()
+
+    # --------------------------------------------------------------- 探索
+
+    def _discover(self) -> None:
+        # settle=0:UI 的 eCAL session 一直開著,註冊資訊早就熱了。
+        try:
+            nodes = sorted(s.service_name for s in common.list_services(settle=0))
+            topics = sorted(t.topic_name for t in common.list_topics(settle=0))
+        except RuntimeError:
+            return  # monitoring 還沒好,下一輪再說
+
+        if nodes != self._nodes:
+            self._nodes = nodes
+            self._sync_status_subs(nodes)
+            for name in nodes:
+                if name not in self._describes:
+                    self.describe(name)    # 先問清楚它有哪些命令是設定
+            self.nodes_changed.emit(nodes)
+        if topics != self._topics:
+            self._topics = topics
+            self._sync_data_subs([t for t in topics if is_measurement_topic(t)])
+            self.topics_changed.emit(topics)
+
+    def _sync_status_subs(self, nodes: list[str]) -> None:
+        for gone in set(self._status_subs) - set(nodes):
+            self._status_subs.pop(gone).remove_receive_callback()
+        for name in set(nodes) - set(self._status_subs):
+            self._status_subs[name] = self._subscribe(
+                f"{name}/status",
+                lambda raw, n=name: self.node_status.emit(
+                    n, raw.decode("utf-8", "replace")),
+            )
+
+    def _sync_data_subs(self, topics: list[str]) -> None:
+        for gone in set(self._data_subs) - set(topics):
+            self._data_subs.pop(gone).remove_receive_callback()
+        for topic in set(topics) - set(self._data_subs):
+            self._data_subs[topic] = self._subscribe(
+                topic,
+                lambda raw, t=topic: self._emit_measurement(t, raw),
+            )
+
+    def _subscribe(self, topic: str, handler) -> ecal.Subscriber:
+        sub = ecal.Subscriber(topic)
+        sub.set_receive_callback(lambda _t, _dt, data, *_: handler(data.buffer))
+        return sub
+
+    def watch_log(self) -> None:
+        """訂閱 Log node 的狀態。它沒有 `v`,所以不會混進即時數值表。"""
+        if self._log_sub is not None:
+            return
+        self._log_sub = self._subscribe(
+            f"{LOG_SERVICE}/state", lambda raw: self._emit_log_state(raw)
+        )
+
+    def _emit_log_state(self, raw: bytes) -> None:
+        try:
+            payload = json.loads(raw.decode("utf-8", "replace"))
+        except (json.JSONDecodeError, ValueError):
+            return
+        if isinstance(payload, dict):
+            self.log_state.emit(payload)
+
+    def _emit_json(self, signal: Signal, key: str, raw: bytes) -> None:
+        try:
+            payload = json.loads(raw.decode("utf-8", "replace"))
+        except (json.JSONDecodeError, ValueError):
+            return
+        if isinstance(payload, dict):
+            signal.emit(key, payload)
+
+    def _emit_measurement(self, topic: str, raw: bytes) -> None:
+        try:
+            payload = json.loads(raw.decode("utf-8", "replace"))
+        except (json.JSONDecodeError, ValueError):
+            return
+        if is_measurement(payload):      # 判準在 core.topics,跟 Log 用同一個
+            self.measurement.emit(topic, payload)
+
+    # --------------------------------------------------------- 頻率量測
+
+    def watch_rate(self, topic: str | None) -> None:
+        """量一個 topic 的發佈頻率。統計本身用 `common.rate_of`,跟 `st topic hz` 同一份。"""
+        if self._rate_sub is not None:
+            self._rate_sub.remove_receive_callback()
+            self._rate_sub = None
+        self._rate_times.clear()
+        self._rate_topic = topic or ""
+        if not topic:
+            self._rate_timer.stop()
+            return
+        self._rate_sub = self._subscribe(
+            topic, lambda _raw: self._rate_times.append(time.monotonic()))
+        self._rate_timer.start()
+
+    def _emit_rate(self) -> None:
+        if self._rate_topic:
+            self.rate.emit(self._rate_topic, common.rate_of(list(self._rate_times)))
+
+    # ------------------------------------------------------------- 發佈
+
+    def publish(self, topic: str, payload: str, rate: float | None = None,
+                count: int | None = None) -> None:
+        """發佈假資料。解析與配對等待用 common 的,跟 `st topic pub` 同一份。"""
+        self._pool.start(_Publish(self, topic, payload, rate, count))
+
+    # ------------------------------------------------- DUT console 的訂閱
+
+    def watch_console(self, service: str | None) -> None:
+        """只訂閱目前看著的那個 node 的 raw / activity,換 node 就換訂閱。"""
+        for sub in self._console_subs.values():
+            sub.remove_receive_callback()
+        self._console_subs.clear()
+        if not service:
+            return
+        self._console_subs[f"{service}/raw"] = self._subscribe(
+            f"{service}/raw",
+            lambda raw, s=service: self.raw_line.emit(
+                s, raw.decode("utf-8", "replace").rstrip()),
+        )
+        self._console_subs[f"{service}/activity"] = self._subscribe(
+            f"{service}/activity",
+            lambda raw, s=service: self._emit_json(self.activity, s, raw),
+        )
+
+    # --------------------------------------------------------------- 命令
+
+    def call(self, service: str, line: str) -> None:
+        """非同步送出一行命令;結果由 `reply` signal 帶回來。"""
+        self._pool.start(_Call(self, service, line))
+
+    def describe(self, service: str) -> None:
+        """非同步取命令清單;結果由 `describe_ready` signal 帶回來。"""
+
+        class _Describe(QRunnable):
+            def run(_self) -> None:
+                try:
+                    commands = common.describe(service)
+                except Exception:
+                    commands = []
+                self._describes[service] = commands
+                try:
+                    self.describe_ready.emit(service, commands)
+                except RuntimeError:
+                    pass   # 視窗已經關了
+
+        self._pool.start(_Describe())

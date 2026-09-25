@@ -1,0 +1,14 @@
+# 完整的 burn-in 站台。
+#
+# 這裡不列 log —— UI 一開就會自己起一個,寫在這裡會變成兩個搶同一個 service。
+# 目前只有 btm_4208sd 做好了;其餘幾行等該 node 實作後再打開。
+nodes:
+  - run: btm_4208sd
+    args: --port COM11
+  # - run: pfr_100l
+  #   args: --port COM20
+  # - run: serial_dut
+  #   args: --dut axelera_board
+  # - run: ssh_dut
+  #   args: --dut axelera_board --host 192.168.1.50
+ready_timeout: 30
