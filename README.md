@@ -218,12 +218,17 @@ Payload 為 JSON 字串,時間戳由 node 在量測當下蓋上,格式為人眼�
 
 ## 3. Node 啟動與 port 辨識
 
+node 平常由 UI 的「啟動整站」依序啟動(見 3.1),不手動一個一個起。
+要單獨跑(除錯、驗機)就走模組路徑:
+
 ```
-uv run pfr_100l --port COM20     # 指定 port
-uv run pfr_100l                  # 自動掃描
+uv run python -m teststation.nodes.pfr_100l.node --port COM20   # 指定 port
+uv run python -m teststation.nodes.pfr_100l.node                # 自動掃描
 ```
 
-實務上由 UI 的「啟動整站」依序啟動(見 3.1),不手動一個一個起。
+**node 沒有各自的進入點。** 整個專案只有兩個指令:`ui` 與 `visualization` ——
+少一個名字就少一個會跟系統上別的東西撞名的機會,而且 launcher 本來就用模組路徑,
+node 用哪個 Python 跑跟 UI 保證一致。
 
 - 未指定 `--port` 時,node **自己掃描**所有 COM,以該裝置專屬的方式辨識,**使用中的 port 直接跳過**。
   兩台同型裝置因此會自然分配到不同 COM。
@@ -303,8 +308,8 @@ ready_timeout: 30                     # 每個 node 最多等 30 s 變 ok
 | `parse(line)` | 從一行回傳解析出 `{channel: value}`,node 負責 publish |
 
 ```
-uv run serial_dut --dut axelera_board [--port COM5]
-uv run ssh_dut    --dut axelera_board --host 192.168.1.50
+uv run python -m teststation.nodes.serial_dut.node --dut axelera_board [--port COM5]
+uv run python -m teststation.nodes.ssh_dut.node    --dut axelera_board --host 192.168.1.50
 ```
 
 新增一種 DUT 只需新增一個 profile,不改 node。
@@ -380,7 +385,7 @@ payload 處理。**那一層不依賴 Qt** —— 測試計畫的 runner 是無�
 
 ```
 test-station/
-├─ pyproject.toml / uv.lock
+├─ pyproject.toml / uv.lock      # 只有兩個進入點:ui、visualization
 ├─ README.md
 ├─ TODO.md
 ├─ src/teststation/

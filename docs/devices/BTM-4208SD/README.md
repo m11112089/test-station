@@ -32,9 +32,11 @@
 
 ## 2. 啟動
 
+平常由 UI 的「啟動整站」帶起來。要單獨跑(除錯、驗機)就走模組路徑:
+
 ```
-uv run btm_4208sd --port COM11      # 指定 port
-uv run btm_4208sd                   # 自動掃描
+uv run python -m teststation.nodes.btm_4208sd.node --port COM11   # 指定 port
+uv run python -m teststation.nodes.btm_4208sd.node                # 自動掃描
 ```
 
 ```
@@ -96,7 +98,7 @@ wait_until("BTM-4208SD/COM11/ch3", lambda v: v > 45, timeout=1800)
 上線前、換機、或懷疑解析不對時用。不啟動 eCAL、不佔 topic:
 
 ```
-uv run btm_4208sd --port COM11 --sniff
+uv run python -m teststation.nodes.btm_4208sd.node --port COM11 --sniff
 ```
 
 ```

@@ -74,8 +74,9 @@ t,topic,name,value,unit
 ## 啟動
 
 ```
-uv run log                      # logs/ 在當前目錄
-uv run log --logs-dir D:/runs
+# UI 一開就會自己起一個;要單獨跑就走模組路徑
+uv run python -m teststation.nodes.log.node
+uv run python -m teststation.nodes.log.node --logs-dir D:/runs
 ```
 
 Log 要自己找出站上有哪些資料 topic,所以它是**唯一需要 eCAL `MONITORING` 元件**的 node

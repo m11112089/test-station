@@ -40,8 +40,9 @@ UI 的**命令**分頁會照這張表自動長出按鈕與輸入框。
 ## 啟動
 
 ```
-uv run btm_4208sd --port COM11      # 指定 port
-uv run btm_4208sd                   # 自動掃描(只聽不送)
+# 平常由 UI 的「啟動整站」帶起來;要單獨跑就走模組路徑
+uv run python -m teststation.nodes.btm_4208sd.node --port COM11
+uv run python -m teststation.nodes.btm_4208sd.node            # 自動掃描(只聽不送)
 ```
 
 | 選項 | 預設 | 說明 |
