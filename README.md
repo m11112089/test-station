@@ -9,7 +9,7 @@ eCAL 命令**溝通,測試過程可完全自動化,記錄下來的 CSV 事後產
 | Middleware | **eCAL 6**(`eclipse-ecal`),跨 PC 時所有機台必須同為 v6 |
 | UI | PySide6 —— **站台唯一的人機介面** |
 | 報告 | Plotly HTML,事後由 `uv run visualization` 產生 |
-| 儀器 / DUT I/O | pyserial、paramiko(SSH) |
+| 儀器 / DUT I/O | pyserial、paramiko(SSH);影像處理用 numpy |
 
 > **[第一部分:操作站台](#第一部分操作站台)** —— 要用這台機器的人看這裡
 > **[第二部分:實作與契約](#第二部分實作與契約)** —— 要改程式、要接新裝置的人看這裡
@@ -113,6 +113,7 @@ uv run visualization logs/2026-09-21_114517/data.csv
 | UI 每一塊怎麼用 | [docs/ui.md](docs/ui.md) |
 | 記錄與報告 | [docs/log.md](docs/log.md) |
 | BTM-4208SD 熱電偶記錄器 | [docs/devices/BTM-4208SD/README.md](docs/devices/BTM-4208SD/README.md) |
+| RSI3000E(DUT)與它的專用畫面 | [src/teststation/nodes/rsi3000/INTERFACE.md](src/teststation/nodes/rsi3000/INTERFACE.md) |
 | 還沒做完的事 | [TODO.md](TODO.md) |
 
 ---
@@ -189,9 +190,11 @@ Payload 為 JSON 字串,時間戳由 node 在量測當下蓋上,格式為人眼�
 | `<device>/<port>/activity` | node 收到的 service 呼叫與 publish 的事件,供 UI 的 DUT console 下半部顯示 |
 | `<device>/<port>/state` | 選用:node 自己那份比 `status` 更細的狀態(例如 Log 的錄製進度) |
 | `<device>/<port>/raw` | 僅 DUT node:DUT 原始輸出的每一行 |
+| `<device>/<port>/image_<name>` | 選用:二進位影像(例如 RSI3000E 的 `image_R`),每則數 MB |
 
 `status` / `activity` / `state` 是 node 自己的狀態,**不是資料**,不會被記錄、
-也不會出現在「要記錄哪些 topic」的清單上。
+也不會出現在「要記錄哪些 topic」的清單上。`image_*` 也一樣不進 Log ——
+影像不是 JSON,UI 的數值表也不訂它。
 判斷一個 payload 是不是量測值,看它**有沒有 `v`** —— 不維護排除名單,那種名單一定會漏。
 
 ### 2.3 `describe` 格式
@@ -297,6 +300,18 @@ ready_timeout: 30                     # 每個 node 最多等 30 s 變 ok
 - Topic:`BTM-4208SD/<port>/ch1` … `ch12`;**沒插探棒(over range)的 channel 不 publish**。
 - 詳見 [docs/devices/BTM-4208SD/README.md](docs/devices/BTM-4208SD/README.md)。
 
+### RSI3000E — DUT(Liscotech)
+
+- **一個 process 管兩條連線**:serial console 收命令,TCP 收影像(一個連線一張 packed 12-bit RGGB)。
+  `status` 跟著 console 走,影像執行緒獨立 —— console 斷線時影像照收。
+- 影像拆成四通道發到 `RSI3000/<port>/image_{R,Gr,Gb,B}`,值是**原始 12-bit DN**,不做任何縮放。
+- console 命令排隊,一次一條,等提示符 `>` 回來(300 ms 保底)才送下一條。
+  曝光 / 間隔換成 10 ns tick 是 node 的事,所以 GUI 與測試計畫送同一行命令會得到同一個值。
+- **它是 DUT,有自己的畫面**(`uv run python -m teststation.nodes.rsi3000.gui`),不跟站台 UI 共用。
+  畫面只看不存:即時四通道、全幅 / ROI 統計、設定與拍攝。
+- `--port` 必填,不掃描:console 沒有無害的辨識方式。
+- 詳見 [nodes/rsi3000/INTERFACE.md](src/teststation/nodes/rsi3000/INTERFACE.md)。
+
 ### Serial / SSH — DUT node
 
 通用傳輸 node,DUT 相關的邏輯全部放在 **DUT profile**(`src/teststation/duts/<name>.py`):
@@ -395,6 +410,7 @@ test-station/
 │  ├─ nodes/
 │  │  ├─ pfr_100l/     # node.py、scpi.py、INTERFACE.md
 │  │  ├─ btm_4208sd/   # node.py、protocol.py、INTERFACE.md
+│  │  ├─ rsi3000/      # node.py、protocol.py、image.py、gui.py(專用畫面)、INTERFACE.md
 │  │  ├─ serial_dut/
 │  │  ├─ ssh_dut/
 │  │  └─ log/          # node.py、sync.py、report.py、chart_template.html、plotly.min.js

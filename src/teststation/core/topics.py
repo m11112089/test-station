@@ -20,6 +20,11 @@ STATUS = "status"
 ACTIVITY = "activity"
 STATE = "state"
 RAW = "raw"
+IMAGE_PREFIX = "image_"
+"""影像 topic 的 channel 前綴:`RSI3000/COM6/image_R`。
+
+payload 是幾 MB 的二進位影像,不是 JSON —— UI 的數值表與 Log 都不該去訂它。
+"""
 
 COMMON_CHANNELS = frozenset({STATUS, ACTIVITY, STATE})
 """node 自己的狀態,跟量測無關(README 2.2)。
@@ -52,9 +57,19 @@ def is_raw(topic: str) -> bool:
     return channel_of(topic) == RAW
 
 
+def is_image(topic: str) -> bool:
+    """影像 topic(二進位,每則數 MB)。不是資料,也不進 Log。"""
+    return channel_of(topic).startswith(IMAGE_PREFIX)
+
+
+def is_recordable(topic: str) -> bool:
+    """Log 的「要記錄哪些 topic」清單上該不該出現它。`raw` 要(進 console.log)。"""
+    return not is_common(topic) and not is_image(topic)
+
+
 def is_measurement_topic(topic: str) -> bool:
     """可能帶量測值的 topic。**光看名字不夠**,還要看 payload,見下。"""
-    return not is_common(topic) and not is_raw(topic)
+    return is_recordable(topic) and not is_raw(topic)
 
 
 def is_measurement(payload: object) -> bool:

@@ -38,7 +38,7 @@ import ecal.nanobind_core as ecal
 from ...core.describe import Arg, Command
 from ...core.node import Node
 from ...core.payload import stamp
-from ...core.topics import is_common, is_measurement, is_raw
+from ...core.topics import is_measurement, is_raw, is_recordable
 from .sync import CSV_HEADER
 
 DISCOVERY_INTERVAL = 2.0
@@ -143,10 +143,10 @@ class LogNode(Node):
     def _interesting(self, topic: str) -> bool:
         """只有被 `record` 選到的 topic 才訂閱。
 
-        共通 topic(status / activity)擋掉是保險 —— 就算有人手滑選了也不該進檔案。
+        共通 topic(status / activity)與影像擋掉是保險 —— 就算有人手滑選了也不該進檔案。
         raw 是選得到的:它進 console.log,不進 data.csv。
         """
-        if topic.startswith(f"{self.prefix}/") or is_common(topic):
+        if topic.startswith(f"{self.prefix}/") or not is_recordable(topic):
             return False
         return topic in self._selected
 

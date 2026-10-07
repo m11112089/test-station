@@ -95,6 +95,17 @@ class Node(ABC):
         """子類別額外提供的命令,格式同 describe。"""
         return []
 
+    def on_start(self) -> None:
+        """eCAL 已初始化、主迴圈開始之前呼叫。
+
+        需要自己的背景執行緒的 node(例如 RSI3000 的 TCP 影像)在這裡起 ——
+        那條執行緒要 publish,所以不能早於 eCAL 初始化;也不能掛在 `open_device`,
+        否則 console 沒接上時影像也跟著停。
+        """
+
+    def on_stop(self) -> None:
+        """主迴圈結束、eCAL 收掉之前呼叫。在這裡等 `on_start` 起的執行緒結束。"""
+
     # -------------------------------------------------------------- 共通命令
 
     def _build_commands(self) -> list[Command]:
@@ -219,12 +230,14 @@ class Node(ABC):
         heartbeat = threading.Thread(target=self._heartbeat, daemon=True)
         heartbeat.start()
         self._retry_deadline = time.monotonic() + RECONNECT_TIMEOUT
+        self.on_start()
         try:
             self._loop()
         except KeyboardInterrupt:
             pass
         finally:
             self._stop.set()
+            self.on_stop()
             self._teardown_device()
             ecal.finalize()
 

@@ -44,6 +44,14 @@ def test_measurement_topics(topic):
     assert topics.is_measurement_topic(topic)
 
 
+def test_images_are_neither_data_nor_recordable():
+    """影像每則數 MB 而且不是 JSON:數值表不訂、Log 的清單上也不出現。"""
+    assert topics.is_image("RSI3000/COM6/image_R")
+    assert not topics.is_measurement_topic("RSI3000/COM6/image_R")
+    assert not topics.is_recordable("RSI3000/COM6/image_R")
+    assert topics.is_recordable("RSI3000/COM6/raw")       # raw 照樣能選(進 console.log)
+
+
 def test_channel_is_the_last_segment():
     assert topics.channel_of("SSH/192_168_1_50/soc_temp") == "soc_temp"
 
@@ -115,6 +123,8 @@ PURE_MODULES = [
     "teststation.core.describe",
     "teststation.core.payload",
     "teststation.nodes.btm_4208sd.protocol",
+    "teststation.nodes.rsi3000.protocol",
+    "teststation.nodes.rsi3000.image",
     "teststation.nodes.log.sync",
     "teststation.nodes.log.report",
     "teststation.visualization",

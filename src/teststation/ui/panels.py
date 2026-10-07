@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
-from ..core.topics import LOG_SERVICE, channel_of, is_common, node_of
+from ..core.topics import LOG_SERVICE, channel_of, is_recordable, node_of
 from .bridge import Station
 
 STATUS_COLORS = {
@@ -438,12 +438,13 @@ class LogPanel(QGroupBox):
     def _set_topics(self, topics: list[str]) -> None:
         """依 node 分層列出可以記錄的 topic。
 
-        `status` / `activity` / `state` 不在其中 —— 那是 node 自己的狀態(README 2.2)。
+        `status` / `activity` / `state` 不在其中 —— 那是 node 自己的狀態(README 2.2);
+        影像也不在 —— Log 不存影像。
         """
         checked = set(self.selected_topics())
         grouped: dict[str, list[str]] = {}
         for topic in topics:
-            if is_common(topic):
+            if not is_recordable(topic):
                 continue
             grouped.setdefault(node_of(topic), []).append(topic)
 
