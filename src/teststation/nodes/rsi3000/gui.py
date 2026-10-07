@@ -11,7 +11,8 @@ uv run python -m teststation.nodes.rsi3000.gui --node RSI3000/COM6
 
 * 即時 2×2 顯示四通道(縮小 4 倍,預設 ``>> 4`` 固定縮放;Auto-Contrast 改用各通道
   當下全幅 min/max 拉伸 —— **只動顯示,統計永遠讀原始 12-bit DN**)
-* RGB 疊圖:R、(Gr + Gb) / 2、B 疊成一張 1024×768 的彩色影像(不做白平衡)
+* RGB 疊圖:R、(Gr + Gb) / 2、B 疊成一張 1024×768 的彩色影像;
+  「影像處理」區塊可以開關 AWB 等處理(演算法在 `isp.py`)
 * 全幅與 ROI 的 min / max / mean / std(DN);ROI 可拖曳或輸入(通道座標 2048×1536)
 * sensor 開關、張數 / 曝光 / 間隔、拍攝、自由命令列;console 輸出與命令回覆顯示在下方
 
@@ -28,13 +29,13 @@ import numpy as np
 from PySide6.QtCore import QObject, QPoint, QRect, QRunnable, Qt, QThreadPool, Signal
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QDoubleSpinBox, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
-    QMainWindow, QPlainTextEdit, QPushButton, QSpinBox, QVBoxLayout, QWidget,
+    QApplication, QComboBox, QDoubleSpinBox, QGridLayout, QGroupBox, QHBoxLayout, QLabel,
+    QLineEdit, QMainWindow, QPlainTextEdit, QPushButton, QSpinBox, QVBoxLayout, QWidget,
 )
 
 from ... import client
 from ...core.topics import IMAGE_PREFIX, RAW, STATUS
-from . import image
+from . import image, isp, protocol
 from .protocol import DEVICE
 
 DOWNSCALE = 4
@@ -53,36 +54,25 @@ OVERLAY = QColor(0, 255, 0)
 
 # ------------------------------------------------------------- 純計算
 
-def to_8bit(sample: np.ndarray, low: int, high: int, auto_contrast: bool) -> np.ndarray:
-    """12-bit → 8-bit 顯示值:固定 `>> 4`,或 Auto-Contrast 時把 [low, high] 拉伸到 0–255。"""
-    if not auto_contrast:
-        return (sample >> 4).astype(np.uint8)
-    span = max(1, high - low)
-    stretched = (sample.astype(np.int32) - low) * 255 // span
-    return stretched.clip(0, 255).astype(np.uint8)
-
-
 def preview(plane: np.ndarray, full: image.Stat, auto_contrast: bool) -> np.ndarray:
     """原始平面 → 縮小 4 倍的 8-bit 顯示用拷貝。**只給畫面用**,不回頭影響統計。"""
-    return to_8bit(plane[::DOWNSCALE, ::DOWNSCALE], full.min, full.max, auto_contrast)
+    return isp.to_8bit(plane[::DOWNSCALE, ::DOWNSCALE], full.min, full.max, auto_contrast)
 
 
-def compose_rgb(planes: list[np.ndarray], stats: list[image.Stat],
-                auto_contrast: bool) -> np.ndarray:
-    """四通道疊成一張 RGB:R、G = (Gr + Gb) / 2、B,縮小 2 倍 → (768, 1024, 3) uint8。
+PROCESSING = [
+    # (名字, 按鈕文字, 說明, 只作用在 RGB 疊圖)
+    ("ae", "AE", "自動曝光:依前一張影像的亮度調整曝光,**會送 set_exposure 給裝置**。"
+                 "開著時曝光欄位只顯示、不能設定", False),
+    ("awb", "AWB", "自動白平衡(gray world):讓 R、G、B 平均相等,飽和像素不算", True),
+]
+"""「影像處理」區塊的開關,依序排成每列 3 個。
 
-    每個 2×2 Bayer quad 正好對應通道平面的一個像素,所以不需要內插,
-    這就是最直接的 RGB。沒有白平衡與色彩校正 —— 顏色是 sensor 原始的樣子。
-    Auto-Contrast 時三色各自拉伸(等於一個粗略的自動白平衡);G 的範圍取 Gr、Gb 合起來。
-    """
-    r, gr, gb, b = (plane[::RGB_DOWNSCALE, ::RGB_DOWNSCALE] for plane in planes)
-    s_r, s_gr, s_gb, s_b = stats
-    g = ((gr.astype(np.uint32) + gb) // 2).astype(np.uint16)
-    return np.dstack([
-        to_8bit(r, s_r.min, s_r.max, auto_contrast),
-        to_8bit(g, min(s_gr.min, s_gb.min), max(s_gr.max, s_gb.max), auto_contrast),
-        to_8bit(b, s_b.min, s_b.max, auto_contrast),
-    ])
+只作用在 RGB 疊圖的那幾個,名字對到 `isp.Options` 的欄位,RGB 疊圖關著時反灰。
+之後加 CCM 等:先在 `isp.Options` 加欄位、在 `isp.compose_rgb` 實作,
+再在這裡加一行 —— 按鈕會自己排進去。
+"""
+
+PROCESSING_COLUMNS = 3
 
 
 def clamp_roi(x: int, y: int, w: int, h: int) -> tuple[int, int, int, int]:
@@ -281,6 +271,11 @@ class Rsi3000Window(QMainWindow):
         self._roi = clamp_roi(0, 0, image.CHANNEL_WIDTH, image.CHANNEL_HEIGHT)
         self._status = "?"
         self._frame_index: int | None = None
+        self._frame_captured = True
+        self._sent_exposure_us: float | None = None
+        """最後一次送給裝置的曝光(手動套用或 AE)。下一次 tfc 會用它。"""
+        self._capture_exposure_us: float | None = None
+        """這一輪拍攝(最近一次 tfc)實際用的曝光。AE 以它為基準。"""
 
         self._montage = MontageView()
         self._montage.roi_dragged.connect(self._set_roi)
@@ -307,6 +302,52 @@ class Rsi3000Window(QMainWindow):
 
     # ---------------------------------------------------------- 右側面板
 
+    def _build_processing(self) -> QGroupBox:
+        """「影像處理」區塊:`PROCESSING` 裡每一項一個開關,每列 `PROCESSING_COLUMNS` 個。
+
+        只作用在 RGB 疊圖的那幾個,RGB 疊圖關著時反灰;AE 不受影響,四通道畫面下也能開。
+        按鈕下方一行一項,顯示開著的處理目前的數值(AWB 增益、AE 曝光)。
+        """
+        box = QGroupBox("影像處理")
+        layout = QVBoxLayout(box)
+        toggles = QGridLayout()
+        self._processing: dict[str, QPushButton] = {}
+        self._rgb_only: set[str] = set()
+        for index, (name, label, tip, rgb_only) in enumerate(PROCESSING):
+            toggle = QPushButton(label)
+            toggle.setCheckable(True)
+            toggle.setToolTip(tip)
+            if rgb_only:
+                toggle.setEnabled(False)
+                toggle.toggled.connect(lambda _on: self._render_rgb())
+                self._rgb_only.add(name)
+            row, col = divmod(index, PROCESSING_COLUMNS)
+            toggles.addWidget(toggle, row, col)
+            self._processing[name] = toggle
+        for col in range(PROCESSING_COLUMNS):
+            toggles.setColumnStretch(col, 1)   # 欄寬固定,之後多加按鈕也對得齊
+        self._processing["ae"].toggled.connect(self._toggle_ae)
+        layout.addLayout(toggles)
+        self._notes: dict[str, str] = {}
+        self._processing_note = QLabel("")
+        self._processing_note.setFont(MONO)
+        layout.addWidget(self._processing_note)
+        return box
+
+    def options(self) -> isp.Options:
+        return isp.Options(
+            auto_contrast=self._contrast.isChecked(),
+            **{name: self._processing[name].isChecked() for name in self._rgb_only},
+        )
+
+    def _set_note(self, name: str, text: str) -> None:
+        if text:
+            self._notes[name] = text
+        else:
+            self._notes.pop(name, None)
+        self._processing_note.setText(
+            "\n".join(self._notes[n] for n, *_ in PROCESSING if n in self._notes))
+
     def _build_panel(self) -> QWidget:
         panel = QWidget()
         panel.setFixedWidth(440)
@@ -328,11 +369,14 @@ class Rsi3000Window(QMainWindow):
         self._contrast.toggled.connect(self._toggle_contrast)
         self._rgb = QPushButton("RGB 疊圖")
         self._rgb.setCheckable(True)
-        self._rgb.setToolTip("四通道疊成一張 RGB(G = (Gr + Gb) / 2),不做白平衡")
+        self._rgb.setToolTip("四通道疊成一張 RGB(G = (Gr + Gb) / 2)")
         self._rgb.toggled.connect(self._toggle_rgb)
         grid.addWidget(QLabel("顯示"), row, 0)
         grid.addWidget(self._contrast, row, 1)
         grid.addWidget(self._rgb, row, 2)
+        row += 1
+
+        grid.addWidget(self._build_processing(), row, 0, 1, 3)
         row += 1
 
         self._frames = QSpinBox()
@@ -362,7 +406,7 @@ class Rsi3000Window(QMainWindow):
         row += 1
 
         grid.addWidget(button("套用設定 (scnf / sce / scft)", self._apply), row, 0, 1, 2)
-        grid.addWidget(button("拍攝 (tfc)", lambda: self._link.call("capture")), row, 2)
+        grid.addWidget(button("拍攝 (tfc)", self._capture), row, 2)
         row += 1
 
         roi_row = QHBoxLayout()
@@ -403,18 +447,94 @@ class Rsi3000Window(QMainWindow):
         return self._exposure.value() * EXPOSURE_UNITS[self._unit.currentText()]
 
     def _apply(self) -> None:
-        """三條設定依序送出。換算成 tick 是 node 的事 —— 測試計畫送同樣的命令也得到同樣的值。"""
-        self._link.call(
-            f"set_frames {self._frames.value()}",
-            f"set_exposure {self.exposure_us():.2f}",
-            f"set_frame_rate {self._fps.value():g}",
-        )
+        """三條設定依序送出。換算成 tick 是 node 的事 —— 測試計畫送同樣的命令也得到同樣的值。
+
+        AE 開著時曝光歸 AE 管,這裡只送張數與間隔。
+        """
+        lines = [f"set_frames {self._frames.value()}"]
+        if not self.ae_enabled():
+            lines.append(f"set_exposure {self.exposure_us():.2f}")
+            self._sent_exposure_us = self.exposure_us()
+        lines.append(f"set_frame_rate {self._fps.value():g}")
+        self._link.call(*lines)
+
+    def _capture(self) -> None:
+        """送 tfc,並記下這一輪拍攝用的曝光。
+
+        **曝光只在 tfc 時套用**:實機上 scnf 10 的一輪裡中途送 `sce`,其餘幾張亮度完全沒變
+        (曝光減了 128 倍,平均仍是 3850 DN)。所以這一輪每一張用的都是按下 tfc 當時的曝光。
+        """
+        self._capture_exposure_us = (self._sent_exposure_us if self._sent_exposure_us is not None
+                                     else self.exposure_us())
+        self._link.call("capture")
+
+    # ---------------------------------------------------------------- AE
+
+    def ae_enabled(self) -> bool:
+        return self._processing["ae"].isChecked()
+
+    def _toggle_ae(self, on: bool) -> None:
+        """AE 開著時曝光欄位只顯示 AE 送出去的值,不能手動設定。
+
+        打開時先把欄位上的曝光送一次:GUI 剛開時不知道裝置上實際是多少
+        (可能是上一次 AE 留下的),起點不一致的話 AE 第一步就算錯。
+        """
+        self._exposure.setEnabled(not on)
+        self._unit.setEnabled(not on)
+        tip = "AE 控制中:只顯示,不能設定" if on else ""
+        self._exposure.setToolTip(tip)
+        self._unit.setToolTip(tip)
+        self._set_note("ae", "AE  從欄位上的曝光開始,等下一次 tfc…" if on else "")
+        if on:
+            self._sent_exposure_us = self.exposure_us()
+            self._link.call(f"set_exposure {self._sent_exposure_us:.2f}")
+
+    def _show_exposure(self, exposure_us: float) -> None:
+        self._exposure.setValue(exposure_us / EXPOSURE_UNITS[self._unit.currentText()])
+
+    def _auto_expose(self) -> None:
+        """依剛湊齊的這一張算下一次 tfc 的曝光;要調就送 `set_exposure`(跟手動設定同一條命令)。
+
+        **以「這一輪拍攝實際用的曝光」為基準**,不是欄位上已經改過的值:曝光要到下一次 tfc
+        才生效,同一輪的每一張都是舊曝光拍的。以欄位為基準的話,一輪 10 張會連乘 10 次
+        (實機上從 250 ms 一路減半到 1 ms),下一輪就嚴重欠曝 —— 來回爆亮、爆暗。
+        這樣算,同一輪每一張得到的是同一個值,所以一輪只會送一次。
+        """
+        if not self.ae_enabled() or any(p is None for p in self._planes):
+            return
+        base = (self._capture_exposure_us if self._capture_exposure_us is not None
+                else self.exposure_us())
+        step = isp.ae_step(base, self._planes)
+        status = f"mean {step.mean:6.0f} DN  sat {step.saturated * 100:4.1f}%"
+        if step.exposure_us is None:
+            self._set_note("ae", f"AE  {status}  本輪 {base:g} us(不調)")
+            return
+        already_sent = (self._sent_exposure_us is not None
+                        and abs(step.exposure_us - self._sent_exposure_us)
+                        <= self._sent_exposure_us * 1e-3)
+        self._set_note("ae", f"AE  {status}  本輪 {base:g} → 下次 tfc {step.exposure_us:.2f} us")
+        if already_sent:
+            return
+        self._sent_exposure_us = step.exposure_us
+        self._show_exposure(step.exposure_us)
+        self._link.call(f"set_exposure {step.exposure_us:.2f}")
 
     def _send_command(self) -> None:
         text = self._command.text().strip()
-        if text:
+        if not text:
+            return
+        words = text.split()
+        # 手打的 tfc / sce 也要讓 AE 知道,不然它的基準會跟裝置對不上。
+        if words == [protocol.CAPTURE]:
+            self._capture()
+        else:
+            if words[:2] == ["sce", "l"] and len(words) == 3:
+                try:
+                    self._sent_exposure_us = int(words[2], 16) / protocol.TICKS_PER_US
+                except ValueError:
+                    pass
             self._link.call(f"send {text}")
-            self._command.clear()
+        self._command.clear()
 
     def _on_reply(self, line: str, reply: str) -> None:
         self._log.appendPlainText(f">> {line}\n   {reply}")
@@ -433,10 +553,18 @@ class Rsi3000Window(QMainWindow):
         self._roi_stat[channel] = self._stat_in_roi(frame.plane)
         self._indices[channel] = frame.index
         self._render(channel)
-        # 四個通道是分開到的;湊齊同一張的四個才疊 RGB,不混用新舊兩張。
+        # 四個通道是分開到的;湊齊同一張的四個才疊 RGB、才算 AE,不混用新舊兩張。
         if len(set(self._indices)) == 1:
             self._render_rgb()
+            if frame.captured:
+                self._auto_expose()
+            else:
+                # 不是 tfc 拍的(開 sensor 時的自我測試):顯示,但標出來,AE 不拿它算。
+                self._log.appendPlainText(
+                    f"[GUI] frame #{frame.index} 不是 tfc 拍的(多半是開 sensor 時的自我測試),"
+                    "AE 略過")
         self._frame_index = frame.index
+        self._frame_captured = frame.captured
         self._refresh_title()
         self._refresh_stats()
 
@@ -448,7 +576,11 @@ class Rsi3000Window(QMainWindow):
     def _render_rgb(self) -> None:
         if not self._rgb.isChecked() or any(p is None for p in self._planes):
             return   # 不顯示 RGB 時不算,省下每張約幾十 ms
-        self._montage.set_rgb(compose_rgb(self._planes, self._full, self._contrast.isChecked()))
+        options = self.options()
+        rgb, gains = isp.compose_rgb(self._planes, self._full, options, RGB_DOWNSCALE)
+        self._montage.set_rgb(rgb)
+        self._set_note("awb", f"AWB 增益  R ×{gains.r:.3f}  G ×{gains.g:.3f}  B ×{gains.b:.3f}"
+                       if options.awb else "")
 
     def _toggle_contrast(self, on: bool) -> None:
         self._contrast.setText(f"Auto-Contrast: {'開啟' if on else '關閉'}")
@@ -457,6 +589,10 @@ class Rsi3000Window(QMainWindow):
         self._render_rgb()
 
     def _toggle_rgb(self, on: bool) -> None:
+        for name in self._rgb_only:
+            self._processing[name].setEnabled(on)
+        if not on:
+            self._set_note("awb", "")
         self._render_rgb()          # 用手上這張疊,不必等下一張
         self._montage.show_rgb(on)
 
@@ -480,6 +616,8 @@ class Rsi3000Window(QMainWindow):
 
     def _refresh_title(self) -> None:
         frame = "—" if self._frame_index is None else f"#{self._frame_index}"
+        if self._frame_index is not None and not self._frame_captured:
+            frame += "(非拍攝)"
         self.setWindowTitle(f"RSI3000 — {self._link.node} | {self._status} | frame {frame}")
 
     def _refresh_stats(self) -> None:

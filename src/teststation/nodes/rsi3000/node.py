@@ -14,11 +14,15 @@
 from __future__ import annotations
 
 import argparse
+import errno
+import json
 import socket
+import subprocess
 import sys
 import threading
 import time
 from collections import deque
+from dataclasses import dataclass
 
 import ecal.nanobind_core as ecal
 import serial
@@ -42,6 +46,12 @@ ACCEPT_TIMEOUT = 1.0
 RECEIVE_TIMEOUT = 30.0
 """一張影像傳到一半就沒下文時,多久放棄這個連線。"""
 
+MODULE = "teststation.nodes.rsi3000.node"
+"""用來認出「這是另一個 RSI3000 node」:它的命令列一定帶著這個模組路徑。"""
+
+TAKEOVER_TIMEOUT = 5.0
+"""砍掉舊的 node 之後,最多等這麼久讓 port 放出來。"""
+
 _TEXT = ecal.DataTypeInformation(name="text", encoding="utf-8")
 _IMAGE = ecal.DataTypeInformation(name="rsi3000_image", encoding="raw")
 
@@ -60,6 +70,7 @@ class Rsi3000Node(Node):
         self._queue_lock = threading.Lock()
         self._prompt_seen = True
         self._last_write = 0.0
+        self._captures = protocol.CaptureTracker()
         self._raw_pub: ecal.Publisher | None = None
         self._image_thread: threading.Thread | None = None
 
@@ -161,6 +172,7 @@ class Rsi3000Node(Node):
             raise DeviceError(str(exc)) from exc
         self._prompt_seen = False
         self._last_write = time.monotonic()
+        self._captures.sent(line)
         self.activity("TX", line)
 
     def _publish_raw(self, line: str) -> None:
@@ -211,9 +223,12 @@ class Rsi3000Node(Node):
             except ValueError as exc:      # 大小不對:整張丟掉,不用半張資料
                 self.activity("ERR", f"image from {peer[0]}: {exc}")
                 continue
+            # 不是 tfc 拍的(例如開 sensor 時的自我測試)照樣發,但標起來,讓接收端分得出來。
+            captured = self._captures.frame_arrived()
             for channel, (publisher, plane) in enumerate(zip(publishers, planes)):
-                publisher.send(image.encode(channel, index, plane))
-            self.activity("IMG", f"frame {index} from {peer[0]}")
+                publisher.send(image.encode(channel, index, plane, captured))
+            note = "" if captured else " (not captured: no tfc pending)"
+            self.activity("IMG", f"frame {index} from {peer[0]}{note}")
             index += 1
 
 
@@ -228,6 +243,70 @@ def _receive_all(conn: socket.socket) -> bytes:
         buffer.extend(chunk[:received])
 
 
+@dataclass(frozen=True)
+class PortOwner:
+    pid: int
+    name: str
+    command: str
+    parent_pid: int
+    parent_command: str
+
+
+def port_owner(port: int) -> PortOwner | None:
+    """Windows 上誰在監聽這個 TCP port。查不到(或不是 Windows)回 None。"""
+    if sys.platform != "win32":
+        return None
+    script = (
+        f"$c = Get-NetTCPConnection -LocalPort {port} -State Listen -ErrorAction SilentlyContinue"
+        " | Select-Object -First 1;"
+        " if (-not $c) { exit };"
+        " $p = Get-CimInstance Win32_Process -Filter \"ProcessId=$($c.OwningProcess)\";"
+        " $q = Get-CimInstance Win32_Process -Filter \"ProcessId=$($p.ParentProcessId)\";"
+        " [pscustomobject]@{pid=$p.ProcessId; name=$p.Name; cmd=$p.CommandLine;"
+        " ppid=$p.ParentProcessId; pcmd=$q.CommandLine} | ConvertTo-Json -Compress"
+    )
+    result = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                            capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if not result.stdout.strip():
+        return None
+    found = json.loads(result.stdout)
+    return PortOwner(int(found["pid"]), found.get("name") or "?", found.get("cmd") or "",
+                     int(found.get("ppid") or 0), found.get("pcmd") or "")
+
+
+def listen(host: str, port: int, log=print) -> socket.socket:
+    """監聽影像 port。**被舊的 RSI3000 node 佔著就把它砍掉再接手** —— 重複啟動時新的贏。
+
+    佔著的如果不是 RSI3000 node(例如 C++ 版的 rsi3000_bridge),一律不碰,照樣報錯,
+    並說出是誰佔著。
+    """
+    try:
+        return socket.create_server((host, port))
+    except OSError as exc:
+        if exc.errno not in (errno.EADDRINUSE, 10048):
+            raise
+        owner = port_owner(port)
+        if owner is None:
+            raise
+        if MODULE not in owner.command:
+            raise OSError(exc.errno, f"port {port} is held by {owner.name} (pid {owner.pid}),"
+                                     " not an RSI3000 node; leaving it alone") from exc
+
+    # venv 的 python.exe 是個啟動器,真正監聽的是它的子行程:連同啟動器整棵一起收掉。
+    target = owner.parent_pid if MODULE in owner.parent_command else owner.pid
+    log(f"port {port} is held by a previous RSI3000 node (pid {owner.pid}); stopping it")
+    subprocess.run(["taskkill", "/PID", str(target), "/T", "/F"], capture_output=True)
+
+    deadline = time.monotonic() + TAKEOVER_TIMEOUT
+    while True:
+        try:
+            return socket.create_server((host, port))
+        except OSError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.2)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="rsi3000", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -239,7 +318,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        listener = socket.create_server((args.tcp_host, args.tcp_port))
+        listener = listen(args.tcp_host, args.tcp_port)
     except OSError as exc:
         print(f"TCP listen {args.tcp_host}:{args.tcp_port} failed: {exc}", file=sys.stderr)
         return 1

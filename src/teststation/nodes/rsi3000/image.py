@@ -31,8 +31,15 @@ CHANNELS = ("R", "Gr", "Gb", "B")
 """通道順序 = header 的 channel 編號 = 在 mosaic 裡的 (列奇偶, 行奇偶)。"""
 
 MAGIC = 0x474D4945  # "EIMG"
-HEADER = struct.Struct("<6I")
-"""magic, width, height, bits_valid, channel, frame_index —— 全部 little-endian uint32。"""
+HEADER = struct.Struct("<3I2H2I")
+"""magic, width, height, bits_valid, flags, channel, frame_index(little-endian)。
+
+C++ 版的 `bits_valid` 是 uint32;這裡把它拆成兩個 uint16:低 16 位仍是 bits(12),
+高 16 位放 `flags`。位元組位置與大小(24 bytes)都沒變,C++ 版的訂閱端不讀這個欄位,所以仍相容。
+"""
+
+FLAG_NOT_CAPTURED = 0x0001
+"""這張不是 `tfc` 拍的 —— 例如開 sensor 時裝置自己送出的 DMA 自我測試影像。"""
 
 
 def unpack12(packed: bytes, width: int = FULL_WIDTH, height: int = FULL_HEIGHT) -> np.ndarray:
@@ -53,9 +60,10 @@ def split_bayer(mosaic: np.ndarray) -> list[np.ndarray]:
             for row, col in ((0, 0), (0, 1), (1, 0), (1, 1))]
 
 
-def encode(channel: int, frame_index: int, plane: np.ndarray) -> bytes:
+def encode(channel: int, frame_index: int, plane: np.ndarray, captured: bool = True) -> bytes:
     height, width = plane.shape
-    header = HEADER.pack(MAGIC, width, height, BITS_VALID, channel, frame_index)
+    flags = 0 if captured else FLAG_NOT_CAPTURED
+    header = HEADER.pack(MAGIC, width, height, BITS_VALID, flags, channel, frame_index)
     return header + plane.astype("<u2", copy=False).tobytes()
 
 
@@ -66,18 +74,21 @@ class Frame:
     plane: np.ndarray
     """uint16,shape (height, width),右對齊的 12-bit 原值。"""
 
+    captured: bool = True
+    """是不是 `tfc` 拍的。False 時 GUI 照樣顯示但會標出來,AE 不拿它算。"""
+
 
 def decode(message: bytes) -> Frame | None:
     """一則通道訊息 → Frame;格式不對回 None(訂閱端直接略過)。"""
     if len(message) < HEADER.size:
         return None
-    magic, width, height, _bits, channel, index = HEADER.unpack_from(message)
+    magic, width, height, _bits, flags, channel, index = HEADER.unpack_from(message)
     if magic != MAGIC or channel >= len(CHANNELS):
         return None
     if len(message) != HEADER.size + width * height * 2:
         return None
     plane = np.frombuffer(message, dtype="<u2", offset=HEADER.size).reshape(height, width)
-    return Frame(channel, index, plane)
+    return Frame(channel, index, plane, captured=not flags & FLAG_NOT_CAPTURED)
 
 
 @dataclass(frozen=True)

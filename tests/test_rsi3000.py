@@ -66,6 +66,37 @@ def test_console_output_is_split_into_lines():
     assert splitter.flush() is None
 
 
+# ------------------------------------------------ 哪些影像是 tfc 拍的
+
+def test_frames_without_a_tfc_are_not_captures():
+    tracker = protocol.CaptureTracker()
+    tracker.sent("csp 1")                      # 開 sensor:裝置會自己送一張自我測試
+    assert tracker.frame_arrived() is False
+
+
+def test_each_tfc_expects_scnf_frames():
+    tracker = protocol.CaptureTracker()
+    tracker.sent("scnf 2")
+    tracker.sent("tfc")
+    assert [tracker.frame_arrived() for _ in range(3)] == [True, True, False]
+
+
+def test_before_any_scnf_everything_after_tfc_counts_until_csp():
+    tracker = protocol.CaptureTracker()
+    tracker.sent("tfc")
+    assert [tracker.frame_arrived() for _ in range(5)] == [True] * 5
+    tracker.sent("csp 1")                      # 開關 sensor 歸零
+    assert tracker.frame_arrived() is False
+
+
+def test_tfcs_add_up():
+    tracker = protocol.CaptureTracker()
+    tracker.sent("scnf 1")
+    tracker.sent("tfc")
+    tracker.sent("tfc")
+    assert [tracker.frame_arrived() for _ in range(3)] == [True, True, False]
+
+
 # ------------------------------------------------------------ 影像格式
 
 def test_unpack12_matches_the_wire_layout():
@@ -99,13 +130,22 @@ def test_channel_message_round_trips_with_the_cpp_header():
     frame = image.decode(message)
     assert (frame.channel, frame.index) == (2, 7)
     assert np.array_equal(frame.plane, plane)
+    assert frame.captured
+
+
+def test_the_not_captured_flag_rides_in_the_upper_half_of_bits_valid():
+    """C++ 版把 offset 12 當成 uint32 的 bits_valid:低 16 位仍是 12,旗標在高 16 位。"""
+    message = image.encode(0, 1, np.zeros((2, 2), np.uint16), captured=False)
+    assert len(message) == 24 + 8
+    assert int.from_bytes(message[12:16], "little") == 12 | (image.FLAG_NOT_CAPTURED << 16)
+    assert image.decode(message).captured is False
 
 
 @pytest.mark.parametrize("message", [
     b"",
     b"\x00" * 24,                                              # magic 不對
     image.encode(0, 0, np.zeros((2, 2), np.uint16))[:-2],      # 少了資料
-    image.HEADER.pack(image.MAGIC, 2, 2, 12, 9, 0) + b"\x00" * 8,   # channel 超出範圍
+    image.HEADER.pack(image.MAGIC, 2, 2, 12, 0, 9, 0) + b"\x00" * 8,   # channel 超出範圍
 ])
 def test_bad_messages_are_ignored(message):
     assert image.decode(message) is None
@@ -141,22 +181,105 @@ def _planes(values):
     return [np.full((image.CHANNEL_HEIGHT, image.CHANNEL_WIDTH), v, np.uint16) for v in values]
 
 
+def _rgb(planes, **options):
+    from teststation.nodes.rsi3000 import isp
+    return isp.compose_rgb(planes, [image.stat(p) for p in planes], isp.Options(**options))
+
+
 def test_rgb_takes_r_mean_of_greens_and_b():
-    from teststation.nodes.rsi3000.gui import compose_rgb
-    planes = _planes((4095, 1600, 2400, 0))      # G = 2000 → 125(>> 4)
-    rgb = compose_rgb(planes, [image.stat(p) for p in planes], auto_contrast=False)
+    rgb, _gains = _rgb(_planes((4095, 1600, 2400, 0)))     # G = 2000 → 125(>> 4)
     assert rgb.shape == (768, 1024, 3) and rgb.dtype == np.uint8
     assert rgb[0, 0].tolist() == [255, 125, 0]
 
 
 def test_rgb_auto_contrast_stretches_each_colour():
-    from teststation.nodes.rsi3000.gui import compose_rgb
     planes = _planes((100, 200, 200, 300))
     for p, bright in zip(planes, (110, 210, 210, 310)):
         p[::4, ::4] = bright
-    rgb = compose_rgb(planes, [image.stat(p) for p in planes], auto_contrast=True)
+    rgb, _gains = _rgb(planes, auto_contrast=True)
     for colour in range(3):
         assert (rgb[..., colour].min(), rgb[..., colour].max()) == (0, 255)
+
+
+def test_awb_makes_a_grey_scene_grey():
+    rgb, gains = _rgb(_planes((1000, 2000, 2000, 1600)), awb=True)
+    assert (gains.r, gains.g, gains.b) == pytest.approx((2.0, 1.0, 1.25))
+    r, g, b = rgb[0, 0].tolist()
+    assert r == g == b == 125
+
+
+def test_awb_ignores_saturated_pixels():
+    planes = _planes((1000, 2000, 2000, 1600))
+    planes[0][:100] = 4095                     # 一塊過曝:不該把 R 的增益拉低
+    _rgb_image, gains = _rgb(planes, awb=True)
+    assert gains.r == pytest.approx(2.0)
+
+
+def test_awb_with_auto_contrast_keeps_the_balance():
+    """AWB 開時 Auto-Contrast 三色共用範圍 —— 各自拉伸會把剛調好的比例洗掉。"""
+    planes = _planes((1000, 2000, 2000, 1600))
+    for p in planes:
+        p[::4, ::4] = p[::4, ::4] * 6 // 5     # 亮一點的灰:三色同比例
+    rgb, _gains = _rgb(planes, awb=True, auto_contrast=True)
+    for pixel in (rgb[0, 0], rgb[0, 1]):         # 亮的灰、暗的灰
+        assert pixel[0] == pixel[1] == pixel[2]
+    assert (rgb[0, 0, 0], rgb[0, 1, 0]) == (255, 0)
+
+
+def _ae(values, current=10_000.0, saturate_rows=0):
+    from teststation.nodes.rsi3000 import isp
+    planes = _planes(values)
+    for p in planes:
+        p[:saturate_rows] = 4095
+    return isp.ae_step(current, planes)
+
+
+def test_ae_brightens_a_dark_frame_in_proportion():
+    step = _ae((1000,) * 4)                       # 目標 1500 → × 1.5
+    assert step.exposure_us == pytest.approx(15_000.0)
+
+
+def test_ae_darkens_a_bright_frame():
+    step = _ae((3000,) * 4)
+    assert step.exposure_us == pytest.approx(5_000.0)
+
+
+def test_ae_steps_are_limited_to_two_times():
+    assert _ae((100,) * 4).exposure_us == pytest.approx(20_000.0)
+
+
+def test_ae_leaves_a_frame_on_target_alone():
+    step = _ae((1520,) * 4)                       # ±5% 內
+    assert step.exposure_us is None
+    assert step.mean == pytest.approx(1520)
+
+
+def test_a_small_bright_region_does_not_drag_the_exposure_down():
+    """實機:角落一塊燈光一直飽和(> 1%),以前 AE 因此一路壓暗到平均 600 DN 再來回擺盪。
+
+    測光只看沒飽和的像素,所以背景 1000 DN → 照樣 × 1.5。
+    """
+    step = _ae((1000,) * 4, saturate_rows=100)    # 100 / 1536 列 ≈ 6.5% 飽和
+    assert step.saturated > 0.01
+    assert step.mean == pytest.approx(1000)
+    assert step.exposure_us == pytest.approx(15_000.0)
+
+
+def test_mostly_overexposed_wins_over_the_mean():
+    """大半張都飽和(> 20%):不管沒飽和的那些多暗,先減半。"""
+    step = _ae((500,) * 4, saturate_rows=400)     # 400 / 1536 列 ≈ 26% 飽和
+    assert step.saturated > 0.2
+    assert step.exposure_us == pytest.approx(5_000.0)
+
+
+def test_ae_stops_at_the_32_bit_tick_limit():
+    from teststation.nodes.rsi3000 import isp
+    assert _ae((100,) * 4, current=isp.AE_MAX_US).exposure_us is None
+
+
+def test_awb_off_leaves_gains_at_one():
+    _rgb_image, gains = _rgb(_planes((1000, 2000, 2000, 1600)))
+    assert (gains.r, gains.g, gains.b) == (1.0, 1.0, 1.0)
 
 
 def test_dragging_on_the_rgb_view_maps_by_two():
@@ -174,6 +297,126 @@ def test_dragging_maps_to_channel_pixels_in_the_start_quadrant():
     from teststation.nodes.rsi3000.gui import drag_to_roi
     # 從 Gr 那一格(右上)的 (10, 20) 拖到 (110, 70),座標放大 4 倍
     assert drag_to_roi(QPoint(512 + 10, 20), QPoint(512 + 110, 70)) == (40, 80, 404, 204)
+
+
+# --------------------------------------------- GUI 的 AE:一輪只調一次
+
+@pytest.fixture
+def window():
+    from PySide6.QtCore import QObject, Signal
+    from PySide6.QtWidgets import QApplication
+    from teststation.nodes.rsi3000.gui import Rsi3000Window
+
+    class FakeLink(QObject):
+        frame = Signal(object)
+        raw = Signal(str)
+        status = Signal(str)
+        reply = Signal(str, str)
+        node = "RSI3000/COM98"
+
+        def __init__(self):
+            super().__init__()
+            self.sent: list[str] = []
+
+        def call(self, *lines):
+            self.sent.extend(lines)
+
+        def close(self):
+            pass
+
+    _app = QApplication.instance() or QApplication([])
+    link = FakeLink()
+    win = Rsi3000Window(link)
+    yield win, link
+    win.close()
+
+
+def _feed(win, index, value, captured=True):
+    for channel in range(4):
+        plane = np.full((image.CHANNEL_HEIGHT, image.CHANNEL_WIDTH), value, np.uint16)
+        win._on_frame(image.Frame(channel, index, plane, captured))
+
+
+def test_ae_adjusts_once_per_capture_not_once_per_frame(window):
+    """實機:scnf 10 一輪裡中途送的 sce 不會生效,10 張都一樣亮。
+
+    以前 AE 每張都拿欄位上的值再減半,一輪就從 250 ms 掉到 1 ms,下一輪嚴重欠曝。
+    """
+    win, link = window
+    win._exposure.setValue(250_000)
+    win._processing["ae"].setChecked(True)
+    win._capture()
+    for index in range(10):
+        _feed(win, index, 3855)                  # 同一輪,亮度不變
+    exposures = [line for line in link.sent if line.startswith("set_exposure")]
+    assert exposures == ["set_exposure 250000.00",      # 開 AE:先對齊起點
+                         "set_exposure 125000.00"]      # 這一輪只調一次
+    assert win.exposure_us() == pytest.approx(125_000)
+
+
+def test_the_next_capture_starts_from_what_ae_sent(window):
+    win, link = window
+    win._exposure.setValue(250_000)
+    win._processing["ae"].setChecked(True)
+    win._capture()
+    _feed(win, 0, 3855)                          # 過亮 → 125 ms
+    win._capture()
+    _feed(win, 1, 2000)                          # 用 125 ms 拍的:1500 / 2000 → 93.75 ms
+    exposures = [line for line in link.sent if line.startswith("set_exposure")]
+    assert exposures == ["set_exposure 250000.00", "set_exposure 125000.00",
+                         "set_exposure 93750.00"]
+
+
+def test_turning_ae_on_sends_the_starting_exposure(window):
+    """GUI 剛開時不知道裝置上的曝光;開 AE 先把欄位上的值送過去,起點才一致。"""
+    win, link = window
+    win._exposure.setValue(10_000)
+    win._processing["ae"].setChecked(True)
+    assert link.sent == ["set_exposure 10000.00"]
+
+
+def test_ae_skips_frames_that_are_not_captures(window):
+    win, link = window
+    win._processing["ae"].setChecked(True)
+    link.sent.clear()
+    _feed(win, 0, 340, captured=False)           # 開 sensor 的自我測試
+    assert not [line for line in link.sent if line.startswith("set_exposure")]
+
+
+# ----------------------------------------------- 重複啟動:新的接手
+
+def test_a_port_held_by_another_program_is_left_alone(monkeypatch):
+    from teststation.nodes.rsi3000 import node as rsi
+    blocker = socket.create_server(("127.0.0.1", 0))
+    port = blocker.getsockname()[1]
+    monkeypatch.setattr(rsi, "port_owner", lambda _port: rsi.PortOwner(
+        1234, "rsi3000_bridge.exe", "rsi3000_bridge.exe COM6", 1, "explorer.exe"))
+    killed = []
+    monkeypatch.setattr(rsi.subprocess, "run", lambda *a, **k: killed.append(a))
+    with pytest.raises(OSError, match="rsi3000_bridge.exe"):
+        rsi.listen("127.0.0.1", port)
+    assert not killed
+    blocker.close()
+
+
+def test_a_previous_rsi3000_node_is_stopped_and_replaced(monkeypatch):
+    from teststation.nodes.rsi3000 import node as rsi
+    blocker = socket.create_server(("127.0.0.1", 0))
+    port = blocker.getsockname()[1]
+    monkeypatch.setattr(rsi, "port_owner", lambda _port: rsi.PortOwner(
+        222, "python3.13.exe", f"python -m {rsi.MODULE} --port COM9",
+        111, f".venv\\Scripts\\python.exe -m {rsi.MODULE} --port COM9"))
+    killed = []
+
+    def fake_taskkill(args, **_kwargs):
+        killed.append(args)
+        blocker.close()            # 舊的 node 死了,port 放出來
+
+    monkeypatch.setattr(rsi.subprocess, "run", fake_taskkill)
+    listener = rsi.listen("127.0.0.1", port, log=lambda _line: None)
+    assert killed == [["taskkill", "/PID", "111", "/T", "/F"]]   # 連啟動器整棵收掉
+    assert listener.getsockname()[1] == port
+    listener.close()
 
 
 # ------------------------------------------------------- node 端到端
@@ -304,5 +547,32 @@ def test_a_tcp_frame_becomes_four_channel_topics(node):
         plane = frames[channel].plane
         assert plane.shape == (image.CHANNEL_HEIGHT, image.CHANNEL_WIDTH)
         assert int(plane.min()) == int(plane.max()) == expected
+        assert frames[channel].captured is False      # 沒送過 tfc:不算拍的
     for sub in subs:
         sub.remove_receive_callback()
+
+
+def test_frames_after_tfc_are_marked_as_captures(node):
+    """scnf 2 + tfc:接下來兩張是拍的,第三張(例如開 sensor 的自我測試)不是。"""
+    captured: dict[int, bool] = {}
+    sub = ecal.Subscriber(f"{node.prefix}/image_R")
+    sub.set_receive_callback(lambda _t, _dt, data, *_: captured.setdefault(
+        image.decode(data.buffer).index, image.decode(data.buffer).captured))
+    time.sleep(1.5)
+
+    node.fake.feed(b"> ")
+    assert _call(node, "set_frames 2").startswith("OK")
+    assert _call(node, "capture").startswith("OK")
+    node.fake.feed(b"> ")
+    assert _wait_for(lambda: b"tfc\r\n" in node.fake.written)
+
+    packed = pack12(np.zeros((image.FULL_HEIGHT, image.FULL_WIDTH), np.uint16))
+    before = len(captured)
+    for _ in range(3):
+        with socket.create_connection(node._listener.getsockname()) as conn:
+            conn.sendall(packed)
+        count = len(captured)
+        assert _wait_for(lambda: len(captured) > count, timeout=15)
+    newest = [captured[i] for i in sorted(captured)][before:]
+    assert newest == [True, True, False]
+    sub.remove_receive_callback()

@@ -13,6 +13,8 @@
 
 from __future__ import annotations
 
+import threading
+
 DEVICE = "RSI3000"
 """service 與 topic 的第一段。node 與 GUI 都用它。"""
 
@@ -58,6 +60,44 @@ def set_exposure(exposure_us: float) -> str:
 
 def set_frame_rate(fps: float) -> str:
     return f"scft * {frame_ticks(fps):X}"
+
+
+class CaptureTracker:
+    """分辨收到的影像是不是 `tfc` 拍的。
+
+    裝置除了拍攝,還會自己送影像出來 —— 實機上每次 `csp 1` 都會送一張開機 DMA 自我測試
+    的影像(幾乎全黑,約 340 DN)。那張不該被當成拍到的畫面,尤其不能拿來算 AE。
+
+    規則:每寫出一次 `tfc`,就預期接下來有 `scnf` 張是拍的;`csp`(開關 sensor)歸零。
+    還沒看過 `scnf` 時不知道一次幾張,就把 `tfc` 之後到下一次 `csp` 之前的都算拍的。
+    `sent()` 在 console 執行緒呼叫,`frame_arrived()` 在影像執行緒呼叫,所以有鎖。
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._per_capture: int | None = None
+        self._pending = 0.0
+
+    def sent(self, line: str) -> None:
+        """一行命令剛寫進 console。"""
+        words = line.split()
+        if not words:
+            return
+        with self._lock:
+            if words[0] == "scnf" and len(words) == 2 and words[1].isdigit():
+                self._per_capture = int(words[1])
+            elif words == [CAPTURE]:
+                self._pending += float("inf") if self._per_capture is None else self._per_capture
+            elif words[0] == "csp":
+                self._pending = 0
+
+    def frame_arrived(self) -> bool:
+        """收到一張影像。回傳它是不是拍的,並扣掉一張。"""
+        with self._lock:
+            if self._pending <= 0:
+                return False
+            self._pending -= 1
+            return True
 
 
 class LineSplitter:

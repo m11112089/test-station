@@ -125,6 +125,7 @@ PURE_MODULES = [
     "teststation.nodes.btm_4208sd.protocol",
     "teststation.nodes.rsi3000.protocol",
     "teststation.nodes.rsi3000.image",
+    "teststation.nodes.rsi3000.isp",
     "teststation.nodes.log.sync",
     "teststation.nodes.log.report",
     "teststation.visualization",
