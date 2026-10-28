@@ -282,12 +282,16 @@ ready_timeout: 30                     # 每個 node 最多等 30 s 變 ok
 
 ### PFR-100L — 可程式化電源(GW Instek)
 
-- RS-232/RS-485,一個 process 對應一台機器、一個 COM,不做 multi-drop。
+- **RS232**(Remote-IN,`F-29 = 1`)或 **USB-CDC**(後面板 USB Type B,`F-29 = 3`)。兩者在 PC 上都是 COM,
+  node 程式碼相同;RS232 的鮑率要跟 `F-71` 一致(`--baud`,出廠 115200)。
+- 一個 process 對應一台機器、一個 COM,不做 multi-drop。
 - 0–50 V / 0–10 A,**額定 100 W**:`set` 時就擋掉 `V設定 × I限流 > 100 W`。
   **這道鎖是防手滑,不是安全機制** —— 安全靠儀器自己的 OVP/OCP,兩者不要混為一談。
 - node 開機時**查詢**機器現況,不改動它。保護值該設多少由現場決定,程式不發表意見。
 - 命令與週期輪詢必須走同一個序列化 I/O 佇列,否則回應會交錯;取樣上限約 10–20 Hz。
-- 原廠文件:`docs/devices/PFR-100L/`(含 Programming Manual)。
+- Topic:`PFR-100L/<port>/voltage`、`current`、`power`(量測值)。
+- 詳見 [docs/devices/PFR-100L/README.md](docs/devices/PFR-100L/README.md)(含 F-29 怎麼切)與
+  [INTERFACE.md](src/teststation/nodes/pfr_100l/INTERFACE.md)。
 
 ### BTM-4208SD — 12 channel 熱電偶記錄器(Lutron)
 

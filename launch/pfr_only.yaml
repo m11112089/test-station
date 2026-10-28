@@ -1,0 +1,19 @@
+# 只有 PFR-100L 的最小站台,用來驗 PFR-100L node 與實機連線。
+#
+# 上線前先在面板切好介面(docs/devices/PFR-100L/README.md 第 1 節):
+#   USB(後面板 Type B)   F-29 = 3
+#   RS232(Remote-IN)     F-29 = 1,F-71 = 鮑率(出廠 115200)
+#
+# 沒給 --port 就自動掃描(每個 COM 送一次 *IDN?),第一次接機器時最省事。
+# 知道 COM 之後建議改成 `args: --port COM20`,啟動比較快、也不會去碰別的 port。
+# RS232 且 F-71 不是 115200 時再加 `--baud 9600` 之類。
+#
+# setting 刻意留空:node 連上時只讀機器現況、不改動它。要每次開檔就設好值再打開下面幾行
+# —— 先限流再電壓,乘積不能超過 100 W。**不要把 output_on 寫進來,開檔就會送電。**
+nodes:
+  - run: pfr_100l
+    # args: --port COM20
+    # setting:
+    #   - set_current 1
+    #   - set_voltage 5
+ready_timeout: 30
