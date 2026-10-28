@@ -12,6 +12,17 @@
 
 驗過的項目直接把這行刪掉,不用改成「已驗證」——狀態記在這裡,不要散進文件。
 
+## PFR-100L — 待補的實機驗證
+
+邏輯都已實作並以假裝置(`tests/test_pfr_100l.py`)測過,但**沒接過實機**。
+
+- [ ] USB-CDC(後面板 Type B,`F-29 = 3`):確認 Windows 出現 COM、自動掃描找得到、activity 寫 `via USB-CDC`
+      —— 這一項同時驗證 GW Instek 的 USB VID 是 `0x2184`(只影響 log 上的標示)
+- [ ] RS232(Remote-IN + PSU-232,`F-29 = 1`):出廠 115200 與改過 `F-71` 搭配 `--baud` 各一次
+- [ ] `:MEAS:ALL?` / `:SYST:ERR?` 的實際回應格式(目前照手冊範例寫)
+- [ ] 送電中拔 USB → `reconnecting`,插回去自己恢復(Windows 要配回同一個 COM 號)
+- [ ] `set_voltage` / `set_current` 在 Output ON 時改值,量測跟著變
+
 ## UI / launcher — 待補
 
 - [ ] UI 的 DUT console 分頁:`raw` 窗格與 `send` 送出路徑沒辦法驗,要等 Serial / SSH
@@ -40,6 +51,5 @@
 
 ## 還沒實作的 node
 
-- [ ] **PFR-100L** — 手冊已在 `docs/devices/PFR-100L/`
 - [ ] **Serial / SSH DUT** + `src/teststation/duts/` 的 DUT profile
 - [ ] **Main-Control** — 測試計畫 runner 與 `teststation.control` client API
