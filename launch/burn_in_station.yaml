@@ -1,12 +1,14 @@
 # 完整的 burn-in 站台。
 #
 # 這裡不列 log —— UI 一開就會自己起一個,寫在這裡會變成兩個搶同一個 service。
-# pfr_100l 已實作但沒接過實機,先註解著;serial_dut / ssh_dut 等該 node 實作後再打開。
+# pfr_100l / pel_3031e 已實作但沒接過實機,先註解著;serial_dut / ssh_dut 等該 node 實作後再打開。
 nodes:
   - run: btm_4208sd
     args: --port COM11
   # - run: pfr_100l
   #   args: --port COM20              # RS232 或 USB-CDC 都一樣;RS232 非 115200 時加 --baud
+  # - run: pel_3031e
+  #   args: --port COM21              # 只有 USB-CDC;setting 的 set_mode 放最後一行
   # - run: serial_dut
   #   args: --dut axelera_board
   # - run: ssh_dut

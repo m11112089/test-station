@@ -25,17 +25,8 @@ from serial.tools import list_ports
 from ...core.describe import Arg, Command
 from ...core.node import DeviceError, Node
 from ...core.scan import find_port
-from .scpi import (
-    MAX_CURRENT,
-    MAX_VOLTAGE,
-    Scpi,
-    is_pfr_100l,
-    parse_bool,
-    parse_idn,
-    parse_number,
-    parse_pair,
-    power_problem,
-)
+from ...core.scpi import Scpi, parse_bool, parse_idn, parse_number, probe_idn
+from .scpi import MAX_CURRENT, MAX_VOLTAGE, MODEL, is_pfr_100l, parse_pair, power_problem
 
 DEFAULT_BAUDRATE = 115200
 """``F-71`` 的出廠值(手冊 p.146:7 = 115200),8N1。USB-CDC 不看這個值。"""
@@ -196,14 +187,8 @@ class Pfr100lNode(Node):
 
 
 def probe(handle: serial.Serial) -> bool:
-    """掃描用的探測:送 ``*IDN?``,回應含 ``PFR-100L`` 就算數(README 3)。
-
-    ``*IDN?`` 是 IEEE 488.2 的標準查詢,打進別台儀器頂多回一行身分,
-    打進 DUT console 也只是一行看不懂的字。
-    """
-    handle.reset_input_buffer()
-    handle.write(b"*IDN?\n")
-    return is_pfr_100l(handle.readline().decode("ascii", errors="replace"))
+    """掃描用的探測:送 ``*IDN?``,回應含 ``PFR-100L`` 就算數。"""
+    return probe_idn(handle, MODEL)
 
 
 def resolve_port(port: str | None, baudrate: int) -> str:

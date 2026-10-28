@@ -1,0 +1,17 @@
+# 只有 PEL-3031E 的最小站台,用來驗 PEL-3031E node 與實機連線。
+#
+# 上線前先在面板把介面切成 USB(docs/devices/PEL-3031E/README.md 第 1 節):
+#   Shift + Help(Utility)> Interface [F3] = USB,線插後面板的 USB Type B。
+#
+# 沒給 --port 就自動掃描(每個 COM 送一次 *IDN?),第一次接機器時最省事。
+# 知道 COM 之後建議改成 `args: --port COM21`,啟動比較快、也不會去碰別的 port。
+#
+# setting 刻意留空:node 連上時只讀機器現況、不改動它。要每次開檔就設好值再打開下面幾行
+# —— 模式放最後一行(設 CC / CP 值會順便切模式)。**不要把 load_on 寫進來,開檔就會開始拉載。**
+nodes:
+  - run: pel_3031e
+    # args: --port COM21
+    # setting:
+    #   - set_current 0.5
+    #   - set_mode CC
+ready_timeout: 30

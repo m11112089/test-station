@@ -13,16 +13,8 @@ import pytest
 
 from teststation.nodes.pfr_100l import node as pfr_node
 from teststation.nodes.pfr_100l.node import GW_INSTEK_VID, Pfr100lNode, probe, transport
-from teststation.nodes.pfr_100l.scpi import (
-    NoResponse,
-    Scpi,
-    ScpiError,
-    is_pfr_100l,
-    parse_error,
-    parse_idn,
-    parse_pair,
-    power_problem,
-)
+from teststation.core.scpi import NoResponse, Scpi, ScpiError, parse_error, parse_idn
+from teststation.nodes.pfr_100l.scpi import is_pfr_100l, parse_pair, power_problem
 
 IDN = "GW-INSTEK,PFR-100L,TW1234567,01.01.12345678"
 

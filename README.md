@@ -239,6 +239,7 @@ node 用哪個 Python 跑跟 UI 保證一致。
 | 裝置 | 辨識方式 |
 |---|---|
 | PFR-100L | 送 `*IDN?`,回應含 `PFR-100L` |
+| PEL-3031E | 送 `*IDN?`,回應含 `PEL-3031E` |
 | BTM-4208SD | **只聽不送**:9600 8N1 下收到符合格式的 16 字元封包 |
 | Serial DUT | 由 DUT profile 的 `identify()` 決定 |
 | SSH DUT | 不掃描,必須以 `--host` 指定 |
@@ -292,6 +293,16 @@ ready_timeout: 30                     # 每個 node 最多等 30 s 變 ok
 - Topic:`PFR-100L/<port>/voltage`、`current`、`power`(量測值)。
 - 詳見 [docs/devices/PFR-100L/README.md](docs/devices/PFR-100L/README.md)(含 F-29 怎麼切)與
   [INTERFACE.md](src/teststation/nodes/pfr_100l/INTERFACE.md)。
+
+### PEL-3031E — 直流電子負載(GW Instek)
+
+- 只有 **USB-CDC**(後面板 USB Type B;面板 `Shift + Help(Utility)> Interface[F3] = USB`)。
+  GPIB 是選配、本站不支援;**沒有 RS232**。
+- 0–150 V / 0–60 A / 300 W。開放 CC / CV / CP 三種模式;CR 先不開(單位出廠是 mS,容易設錯)。
+- node 開機時**查詢**機器現況(模式、range、設定值、OCP/OPP/OVP/UVP),不改動它。
+- Topic:`PEL-3031E/<port>/voltage`、`current`、`power`(量測值)。
+- 詳見 [docs/devices/PEL-3031E/README.md](docs/devices/PEL-3031E/README.md) 與
+  [INTERFACE.md](src/teststation/nodes/pel_3031e/INTERFACE.md)。
 
 ### BTM-4208SD — 12 channel 熱電偶記錄器(Lutron)
 
@@ -395,9 +406,10 @@ test-station/
 ├─ src/teststation/
 │  ├─ client.py        # 站台 client:session、探索、service 呼叫、頻率、payload。**不依賴 Qt**
 │  ├─ visualization.py # uv run visualization <data.csv> → report.html
-│  ├─ core/            # node 基底與共通契約:service、describe、status、activity、COM 掃描、payload、topic 分類
+│  ├─ core/            # node 基底與共通契約:service、describe、status、activity、COM 掃描、SCPI、payload、topic 分類
 │  ├─ nodes/
 │  │  ├─ pfr_100l/     # node.py、scpi.py、INTERFACE.md
+│  │  ├─ pel_3031e/    # node.py、INTERFACE.md
 │  │  ├─ btm_4208sd/   # node.py、protocol.py、INTERFACE.md
 │  │  ├─ serial_dut/
 │  │  ├─ ssh_dut/
@@ -411,7 +423,7 @@ test-station/
 ├─ docs/
 │  ├─ ui.md            # PySide6 UI:操作 + 程式碼規劃
 │  ├─ log.md           # 記錄與報告:操作 + 程式碼規劃
-│  ├─ devices/         # 各裝置的原廠手冊 + 操作文件 README.md(PFR-100L、BTM-4208SD)
+│  ├─ devices/         # 各裝置的原廠手冊 + 操作文件 README.md(PFR-100L、PEL-3031E、BTM-4208SD)
 │  └─ interactive_chart.html   # 報告長相的範例
 └─ logs/               # run 輸出(.gitignore)
 ```

@@ -14,14 +14,25 @@
 
 ## PFR-100L — 待補的實機驗證
 
-邏輯都已實作並以假裝置(`tests/test_pfr_100l.py`)測過,但**沒接過實機**。
+2026-10-28 已接實機(COM7,USB-CDC)與 PEL-3031E 對測過,下面是還沒驗到的。
 
-- [ ] USB-CDC(後面板 Type B,`F-29 = 3`):確認 Windows 出現 COM、自動掃描找得到、activity 寫 `via USB-CDC`
-      —— 這一項同時驗證 GW Instek 的 USB VID 是 `0x2184`(只影響 log 上的標示)
+- [ ] USB-CDC 自動掃描與 activity 的 `via USB-CDC`。2026-10-28 已在 COM7(FW 01.35.20240312)上以
+      `--port` 驗過連線、命令、100 W 鎖、量測,USB VID 確認是 `0x2184`
 - [ ] RS232(Remote-IN + PSU-232,`F-29 = 1`):出廠 115200 與改過 `F-71` 搭配 `--baud` 各一次
-- [ ] `:MEAS:ALL?` / `:SYST:ERR?` 的實際回應格式(目前照手冊範例寫)
 - [ ] 送電中拔 USB → `reconnecting`,插回去自己恢復(Windows 要配回同一個 COM 號)
-- [ ] `set_voltage` / `set_current` 在 Output ON 時改值,量測跟著變
+
+## PEL-3031E — 待補的實機驗證
+
+2026-10-28 在 COM3(FW V1.03.002)上驗過:USB-CDC 連線、自動掃描、`*IDN?` 辨識、狀態查詢、
+量測發佈、設定命令、L range 下 `set_current 10` 被拒收;接 PFR-100L(COM7)對測:
+CC 0.5 A 兩台電流一致、CV 4 V 時 PFR 進限流 1 A、拉載中換模式會關 load(node 回覆會講)。
+
+- [ ] **CP 崩潰**:Low range、CP 2 W、PFR 5 V 供電,10 次裡 8 次電壓掉到 ~0 V、電流卡在電源限流
+      (限流 1 A、2 A 都一樣)。查 `:POWer:RESPonse`、H range、較高功率是否不同。查清楚前文件寫「先別用 CP」
+- [ ] 對測第二輪出現過一次:CC 0.5 A `load_on` 後 PEL 量到 0 V / 0 A、PFR 也只有 0.002 A。
+      之後兩輪與直接追蹤 node 收發都沒重現,原因不明。若再出現,同時記下面板顯示
+- [ ] 拉載中拔 USB → `reconnecting`,插回去自己恢復;負載本身是否繼續拉載
+- [ ] CR 模式要不要開(單位 mS / OHM 的處理)
 
 ## UI / launcher — 待補
 
@@ -53,3 +64,4 @@
 
 - [ ] **Serial / SSH DUT** + `src/teststation/duts/` 的 DUT profile
 - [ ] **Main-Control** — 測試計畫 runner 與 `teststation.control` client API
+      (README 6 的 abort 只寫了「關閉所有 PFR 輸出」,實作時 PEL 也要 `load_off`)
