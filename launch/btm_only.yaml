@@ -1,6 +1,0 @@
-# 只有 BTM-4208SD 的最小站台,用來驗 `st launch` 本身。
-# 完整的 burn-in 站台見 README 3.1 的範例(需要 pfr_100l / serial_dut / ssh_dut;後兩者尚未實作)。
-nodes:
-  - run: btm_4208sd
-    args: --port COM11
-ready_timeout: 30

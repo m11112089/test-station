@@ -164,11 +164,19 @@ class Station(QObject):
         return {node: dict(items) for node, items in self._settings.items() if items}
 
     def remember_setting(self, node: str, line: str) -> None:
-        """記下一筆成功的設定命令。不是設定的命令會被忽略。"""
+        """記下一筆成功的設定命令。不是設定的命令會被忽略。
+
+        **順序 = 最後一次設定的先後**:重設同一個 key 會把它移到最後。存成 launch 檔時
+        照這個順序重放,儀器才會停在跟現在一樣的狀態 —— PEL-3031E 設 CC / CP 值會順便
+        切模式,`set_mode CV` 之後再 `set_power 2` 就是 CP,順序一換結果就不同。
+        """
         arity = self._arity_if_setting(node, line)
         if arity is None:
             return
-        self._settings.setdefault(node, {})[setting_key(line, arity)] = line
+        items = self._settings.setdefault(node, {})
+        key = setting_key(line, arity)
+        items.pop(key, None)
+        items[key] = line
         self.settings_changed.emit()
 
     def _arity_if_setting(self, node: str, line: str) -> int | None:

@@ -21,6 +21,7 @@ GPIB 是選配、本站不支援;這台**沒有 RS232**。
 | `set_current` | `<a>` A,0–60 | CC 模式的電流(`:CURR:VA`);是 setting | `OK 2.5000` |
 | `set_voltage` | `<v>` V,0–150 | CV 模式的電壓(`:VOLT:VA`);是 setting | `OK 12.0000` |
 | `set_power` | `<w>` W,0–300 | CP 模式的功率(`:POW:VA`);是 setting | `OK 24.00` |
+| `check` | — | 目前 load 狀態與模式;load 曾被儀器自己關掉會一併說明 | `OK load ON, mode CV` |
 | `describe` | — | 回傳 JSON 命令清單 | `OK [{"name": "load_on", ...}]` |
 | `set_channel` | `<channel> <name>` | 設定 channel 顯示名稱 | `OK current = DUT_load` |
 | `reconnect` | — | 手動重開連線(重連逾時後使用) | `OK reconnecting` |
@@ -34,6 +35,10 @@ GPIB 是選配、本站不支援;這台**沒有 RS232**。
 * 範圍只檢查到 High range 的額定。Low range(6 A / 15 V / 30 W)的上限由儀器擋,
   回 `ERR ':CURR:VA 10.0000' rejected: -222 Data out of range (:CURR:VA)`。
 * 每道設定命令送出後都會查 `:SYST:ERR?`,儀器不收就回 `ERR ... rejected: <code> <msg>`,**什麼都沒變**。
+* **`load_on` 回 OK 不代表一直在拉。** 保護(例如 ROCP)會讓儀器自己關掉 load,
+  這不會出現在任何命令的回覆裡,`:STAT:QUES:COND?` 實測也讀 0。node 每次輪詢查 `:INP?`,
+  發現被關掉就在 activity 記 `ERR load turned off by the instrument ...`,`check` 也會回報。
+  測試計畫要定期 `check`。
 * CR 模式刻意不開:CR 單位出廠是 mS,`:RESistance` 只在單位設成 OHM 時有效。
 * range 與保護值(OCP / OPP / OVP / UVP)node 不設定,只在連線時查詢。
   不查 `:VRANge?`:實機在 CR 模式下對它不回話。

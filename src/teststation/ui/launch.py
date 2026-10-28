@@ -49,6 +49,34 @@ DEFAULT_READY_TIMEOUT = 30.0
 LOG_RUN = "log"
 """`run:` 的名字。UI 自己起一個,所以 launch 檔裡的同名條目會被跳過。"""
 
+def launch_document(specs: list[dict], services: dict[int, str],
+                    settings: dict[str, dict[str, str]], ready_timeout: float) -> dict:
+    """把這次啟動的 node 清單與目前的設定值組回一份 launch 檔(「存成 launch 檔」用)。
+
+    `specs[i]` 的設定取自 `services[i]` 那個 service —— 以位置對應,見 `Launcher.services`。
+    Log 是 UI 自己起的、不在 `services` 裡,但它的設定(要錄哪些 topic)要放在最前面
+    存下來,否則下次開檔會變成什麼都沒選。launch 檔裡原本的 `run: log` 條目不重複寫。
+    每個 node 的設定照 `settings` 裡的順序寫出,**不排序**。
+    """
+    nodes = []
+    log_settings = list(settings.get(LOG_SERVICE, {}).values())
+    if log_settings:
+        nodes.append({"run": LOG_RUN, "setting": log_settings})
+    for index, spec in enumerate(specs):
+        if spec["run"] == LOG_RUN:
+            continue
+        entry = {"run": spec["run"]}
+        if spec.get("args"):
+            entry["args"] = spec["args"]
+        service = services.get(index)
+        # 不排序:設定的先後就是重放的先後(見 Station.remember_setting)。
+        lines = list(settings.get(service, {}).values()) if service else []
+        if lines:
+            entry["setting"] = lines
+        nodes.append(entry)
+    return {"nodes": nodes, "ready_timeout": ready_timeout}
+
+
 NODE_MODULE = "teststation.nodes.{run}.node"
 """`run: btm_4208sd` → `python -m teststation.nodes.btm_4208sd.node`。
 
@@ -80,6 +108,7 @@ class Launcher(QObject):
         self._failed = 0
         self._ready_timeout = DEFAULT_READY_TIMEOUT
         self._processes: list[list] = []   # [label, QProcess],label 會被改寫
+        self._services: dict[int, str] = {}  # spec 的位置 → 註冊成的 service
         self._log_process: QProcess | None = None
 
         self._before: set[str] = set()
@@ -115,15 +144,15 @@ class Launcher(QObject):
     def ready_timeout(self) -> float:
         return self._ready_timeout
 
-    def service_of(self, run: str) -> str | None:
-        """`run: btm_4208sd` 啟動起來之後註冊成哪個 service(`BTM-4208SD/COM11`)。
+    @property
+    def services(self) -> dict[int, str]:
+        """`specs` 的第幾筆啟動起來之後註冊成哪個 service(`{1: "PFR-100L/COM7"}`)。
 
-        存 launch 檔時要靠它把設定值配回正確的 node。
+        存 launch 檔時要靠它把設定值配回正確的 node。**以 spec 的位置為準**,
+        不能拿 `_processes` 的位置去對:`run: log` 會被跳過、不起行程,
+        兩邊從那一筆之後就錯開一格。同一種 node 開兩台時也只有位置分得出誰是誰。
         """
-        for index, (label, _process) in enumerate(self._processes):
-            if index < len(self._specs) and self._specs[index]["run"] == run:
-                return label if label != run else None
-        return None
+        return dict(self._services)
 
     @property
     def specs(self) -> list[dict]:
@@ -142,6 +171,7 @@ class Launcher(QObject):
         self._ready_timeout = float(document.get("ready_timeout", DEFAULT_READY_TIMEOUT))
         self._index = 0
         self._failed = 0
+        self._services = {}
         self._next()
 
     def _next(self) -> None:
@@ -197,6 +227,7 @@ class Launcher(QObject):
         if not new:
             return
         self._waiting_for = sorted(new)[0]
+        self._services[self._index] = self._waiting_for
         if self._processes:
             self._processes[-1][0] = self._waiting_for
 

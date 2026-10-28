@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 from ..client import session
 from ..core.topics import LOG_SERVICE
 from .bridge import Station
-from .launch import LOG_RUN, Launcher
+from .launch import Launcher, launch_document
 from .panels import (
     MONO, CommandPanel, ConsolePanel, LogPanel, NodeList, PlanPanel,
     TopicToolsPanel, ValueTable,
@@ -118,26 +118,9 @@ class LaunchBar(QWidget):
         if not path:
             return
 
-        settings = self._launcher.station.settings
-        # Log 是 UI 自己起的,不在 specs 裡,但它的設定(要錄哪些 topic)要存下來,
-        # 否則下次開檔會變成什麼都沒選。
-        nodes = []
-        log_settings = sorted(settings.get(LOG_SERVICE, {}).values())
-        if log_settings:
-            nodes.append({"run": LOG_RUN, "setting": log_settings})
-        for spec in specs:
-            if spec["run"] == LOG_RUN:
-                continue        # 上面已經寫過一筆了,而且啟動時本來就會跳過
-            entry = {"run": spec["run"]}
-            if spec.get("args"):
-                entry["args"] = spec["args"]
-            service = self._launcher.service_of(spec["run"])
-            lines = sorted(settings.get(service, {}).values()) if service else []
-            if lines:
-                entry["setting"] = lines
-            nodes.append(entry)
-
-        document = {"nodes": nodes, "ready_timeout": self._launcher.ready_timeout}
+        document = launch_document(specs, self._launcher.services,
+                                   self._launcher.station.settings, self._launcher.ready_timeout)
+        nodes = document["nodes"]
         Path(path).write_text(
             "# 由 UI 產生:node 清單與目前的設定值\n"
             + yaml.safe_dump(document, allow_unicode=True, sort_keys=False),

@@ -1,0 +1,15 @@
+# PFR-100L(COM7,輸出端)供電給 PEL-3031E(COM3,輸入端),Log 記錄兩端的電壓、電流、功率。
+# 兩台都不帶 setting:連上時只讀現況、不改動。**不要把 output_on / load_on 寫進來,開檔就會送電。**
+nodes:
+- run: pel_3031e
+  args: --port COM3
+- run: pfr_100l
+  args: --port COM10
+- run: pfr_100l
+  args: --port COM7
+- run: log
+  setting:
+  - record PEL-3031E/COM3/current PEL-3031E/COM3/power PEL-3031E/COM3/voltage PFR-100L/COM7/current
+    PFR-100L/COM7/power PFR-100L/COM7/voltage PFR-100L/COM10/current
+    PFR-100L/COM10/power PFR-100L/COM10/voltage
+ready_timeout: 30.0

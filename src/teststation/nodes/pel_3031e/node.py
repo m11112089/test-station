@@ -67,6 +67,9 @@ class Pel3031eNode(Node):
         self._serial: serial.Serial | None = None
         self._scpi: Scpi | None = None
         self._next_sample = 0.0
+        # 我們要求的 load 狀態,與儀器自己關掉 load 時的說明(見 _watch_load)。
+        self._load_wanted = False
+        self._tripped: str | None = None
 
     # ------------------------------------------------------------------ 命令
 
@@ -82,6 +85,7 @@ class Pel3031eNode(Node):
                     args=(Arg("v", unit="V", min=0, max=MAX_VOLTAGE),)),
             Command("set_power", "CP 功率", self._cmd_set_power, setting=True,
                     args=(Arg("w", unit="W", min=0, max=MAX_POWER),)),
+            Command("check", "確認狀態", self._cmd_check),
         ]
 
     def _io(self, action):
@@ -95,11 +99,37 @@ class Pel3031eNode(Node):
 
     def _cmd_load_on(self) -> str:
         self._io(lambda s: s.send(":INP ON"))
+        self._load_wanted, self._tripped = True, None
         return "load on"
 
     def _cmd_load_off(self) -> str:
         self._io(lambda s: s.send(":INP OFF"))
+        self._load_wanted = False
         return "load off"
+
+    def _cmd_check(self) -> str:
+        """目前的 load 狀態與模式;load 曾被儀器自己關掉的話一併說明。
+
+        給測試計畫用:`load_on` 回 OK 只代表儀器收下了命令,保護(例如 ROCP)
+        可能在下一瞬間就把 load 關掉,而這件事**不會**出現在任何命令的回覆裡。
+        """
+        on = self._watch_load()
+        mode = self._io(lambda s: s.query(":MODE?"))
+        state = f"load {'ON' if on else 'OFF'}, mode {mode}"
+        return f"{state}; {self._tripped}" if self._tripped else state
+
+    def _watch_load(self) -> bool:
+        """查 :INP?。我們要求 ON、儀器卻是 OFF —— 保護跳脫,記下來並寫進 activity。
+
+        不能靠 `:STATus:QUEStionable:CONDition?`:實機(FW V1.03.002)跳 ROCP 時它讀 0。
+        """
+        on = self._io(lambda s: s.query(":INP?")) in ("1", "ON")
+        if self._load_wanted and not on:
+            self._load_wanted = False
+            self._tripped = (f"load turned off by the instrument at {time.strftime('%H:%M:%S')} "
+                             "(protection alarm, e.g. ROCP; clear it on the panel with Enter)")
+            self.activity("ERR", self._tripped)
+        return on
 
     def _cmd_set_mode(self, mode: str) -> str:
         mode = mode.upper()
@@ -110,6 +140,7 @@ class Pel3031eNode(Node):
         was_on = self._io(lambda s: s.query(":INP?")) in ("1", "ON")
         self._io(lambda s: s.send(f":MODE {mode}"))
         if was_on and self._io(lambda s: s.query(":INP?")) not in ("1", "ON"):
+            self._load_wanted = False  # 是我們換模式造成的,不是保護跳脫
             return f"{mode} (load turned off by the mode change; load_on to resume)"
         return mode
 
@@ -141,6 +172,8 @@ class Pel3031eNode(Node):
             if not is_pel_3031e(idn):
                 raise DeviceError(f"{self.port} is not a {self.device}: {idn!r}")
             state = self._read_state(scpi)
+            # 連上時 load 已經開著(例如重連),之後被保護關掉一樣要抓得到。
+            self._load_wanted, self._tripped = ", load ON," in state, None
             # 查完再清:狀態查詢在某些模式下會留下錯誤(見 _read_state),
             # 不清掉的話會被算到第一道設定命令頭上。
             scpi.clear()
@@ -202,6 +235,7 @@ class Pel3031eNode(Node):
         self.publish("voltage", volts, "V")
         self.publish("current", amps, "A")
         self.publish("power", watts, "W")
+        self._watch_load()
 
 
 def probe(handle: serial.Serial) -> bool:

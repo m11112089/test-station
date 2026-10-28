@@ -1,8 +1,0 @@
-# 由 UI 產生:node 清單與目前的設定值
-nodes:
-- run: log
-  setting:
-  - record BTM-4208SD/COM11/ch1 BTM-4208SD/COM11/ch3
-- run: btm_4208sd
-  args: --port COM11
-ready_timeout: 30.0

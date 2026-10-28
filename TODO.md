@@ -31,6 +31,7 @@ CC 0.5 A 兩台電流一致、CV 4 V 時 PFR 進限流 1 A、拉載中換模式�
       (限流 1 A、2 A 都一樣)。查 `:POWer:RESPonse`、H range、較高功率是否不同。查清楚前文件寫「先別用 CP」
 - [ ] 對測第二輪出現過一次:CC 0.5 A `load_on` 後 PEL 量到 0 V / 0 A、PFR 也只有 0.002 A。
       之後兩輪與直接追蹤 node 收發都沒重現,原因不明。若再出現,同時記下面板顯示
+- [ ] **ROCP**:PFR 30 V 已輸出時 PEL CV 17 V `load_on` 跳 ROCP(Low range 6.6 A)。推測是電源輸出電容放電突波,未驗證;避法是先開 eLoad 再開電源或改 High range。`plans/pfr_pel_cycle_4h.py` 目前維持原順序,只靠 `check` 偵測後停下
 - [ ] 拉載中拔 USB → `reconnecting`,插回去自己恢復;負載本身是否繼續拉載
 - [ ] CR 模式要不要開(單位 mS / OHM 的處理)
 

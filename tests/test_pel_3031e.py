@@ -240,6 +240,50 @@ def test_mode_change_under_load_says_the_load_went_off(connected):
     assert not device.load
 
 
+def test_protection_trip_is_caught_by_poll_and_check(connected):
+    """實機:PFR 30 V 時 CV 17 V load_on → ROCP,儀器自己關 load。load_on 仍回 OK,
+    :STAT:QUES:COND? 也讀 0,唯一的跡象是 :INP? 變 0。"""
+    node, device = connected.node, connected.device
+    node.handle_line("set_mode CV")
+    assert node.handle_line("load_on") == "OK load on"
+    device.load = False  # 保護跳脫
+    node.poll()
+    errors = [text for kind, text in connected.events if kind == "ERR"]
+    assert errors and "turned off by the instrument" in errors[-1]
+    reply = node.handle_line("check")
+    assert reply.startswith("OK load OFF, mode CV; load turned off by the instrument")
+    node.poll()  # 只報一次
+    assert len([k for k, _ in connected.events if k == "ERR"]) == 1
+
+
+def test_check_without_a_trip(connected):
+    node = connected.node
+    assert node.handle_line("check") == "OK load OFF, mode CC"
+    node.handle_line("load_on")
+    assert node.handle_line("check") == "OK load ON, mode CC"
+
+
+def test_our_own_load_off_and_mode_change_are_not_trips(connected):
+    node = connected.node
+    node.handle_line("load_on")
+    node.handle_line("load_off")
+    node.poll()
+    node.handle_line("load_on")
+    assert "load turned off by the mode change" in node.handle_line("set_mode CV")
+    node.poll()
+    assert not [k for k, _ in connected.events if k == "ERR"]
+    assert node.handle_line("check") == "OK load OFF, mode CV"
+
+
+def test_load_on_clears_a_previous_trip(connected):
+    node, device = connected.node, connected.device
+    node.handle_line("load_on")
+    device.load = False
+    node.poll()
+    node.handle_line("load_on")
+    assert node.handle_line("check") == "OK load ON, mode CC"
+
+
 def test_error_message_includes_the_failing_command():
     """實機的 :SYST:ERR? 在訊息後面附上出錯的命令。"""
     assert parse_error("-222, \"Data out of range\";':CURR:VA'") == (

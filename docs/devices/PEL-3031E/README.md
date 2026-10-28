@@ -177,6 +177,7 @@ wait_until("PEL-3031E/COM21/current", lambda a: a > 2.4, timeout=10)
 | 設了值但電流沒變 | 模式是 CV:`set_voltage` 不會切模式,CV 下改 CC 值以外的東西看不出來。看 activity 的 `mode` |
 | 模式自己變了 | 正常:`set_current` 切到 CC、`set_power` 切到 CP(實機行為) |
 | 換模式後電流變 0 | 正常:真的換模式時儀器會關 load。再 `load_on` |
+| 面板跳 **ROCP**、電流 0 | 電流瞬間超過目前 current range 的 110%(Low = 6.6 A),儀器關 load。面板按 **Enter** 清除(沒有遠端命令可清)。實測:PFR 已輸出 30 V 時 CV 17 V `load_on` 會跳 —— 推測是電源輸出電容的放電突波。先開 eLoad 再開電源,或改 High range 可避免 |
 | CP 拉載時電壓掉到 ~0 V、電流卡在電源限流 | CP 崩潰(見第 4 節)。立刻 `load_off`,改用 CC |
 | 回 `ERR not connected` | node 還沒連上(status 不是 `ok`),等它連上再下命令 |
 | 拉載中電流被限住 | OCP / OPP 設成 `LIMIT` 而且到了上限,或輸入電源本身的限流 |
